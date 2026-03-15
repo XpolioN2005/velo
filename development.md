@@ -35,6 +35,7 @@ src/
 | 5 — Static command list         | _(no new features)_                                                                                 | ⬜     |
 | 6 — Fuzzy search                | _(no new features)_                                                                                 | ⬜     |
 | 7 — Hotkey + show/hide          | `Win32_UI_Input_KeyboardAndMouse`                                                                   | ⬜     |
+| 7.5 — System tray icon          | `Win32_UI_Shell` _(TBD)_                                                                            | ⬜     |
 | 8 — Plugin API                  | _(TBD)_                                                                                             | ⬜     |
 
 > **Gotcha:** `WNDCLASSEXW` and `RegisterClassExW` require `Win32_Graphics_Gdi` — not pulled in by `Win32_UI_WindowsAndMessaging` alone.
@@ -48,7 +49,9 @@ WM_HOTKEY    → show window, steal focus
 WM_PAINT     → Direct2D draws entire UI
 WM_CHAR      → append char to query, trigger repaint
 WM_KEYDOWN   → backspace, escape, enter, arrow keys
+WM_CLOSE     → hide window (process stays alive in tray)
 WM_KILLFOCUS → hide window
+WM_DESTROY   → only on explicit quit — PostQuitMessage
 ```
 
 ---
@@ -72,16 +75,19 @@ WM_KILLFOCUS → hide window
 
 ## Build Log
 
-### Step 1 — Blank Win32 window + message loop
+### Step 1 — Blank Win32 window + message loop ✅
 
 - [x] `cargo new --bin velo`
 - [x] Add windows crate with Step 1 features
 - [x] `Win32_Graphics_Gdi` added (required for WNDCLASSEXW)
-- [ ] Create window with correct style flags
-- [ ] Message loop running
+- [x] Window created with correct style flags
+- [x] Message loop running
+- [x] `WM_CLOSE` hides instead of killing — process stays alive
+- [x] `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` — console in dev, silent in release
 
 ### Step 2 — Direct2D render target, clear color
 
+- [ ] Add Step 2 cargo features
 - [ ] COM init (`CoInitializeEx`)
 - [ ] Create D2D1 factory
 - [ ] Create HWND render target
@@ -115,9 +121,16 @@ WM_KILLFOCUS → hide window
 - [ ] Show/hide window on WM_HOTKEY
 - [ ] Hide on WM_KILLFOCUS
 
+### Step 7.5 — System tray icon
+
+- [ ] `Shell_NotifyIconW` — add icon to tray
+- [ ] `WM_APP` custom message — receive tray mouse events
+- [ ] Right-click context menu (Show / Quit)
+- [ ] Quit destroys window and exits cleanly
+
 ### Step 8 — Plugin registration API
 
-- [ ] TBD — design after Step 7 is solid
+- [ ] TBD — design after Step 7.5 is solid
 
 ---
 
@@ -127,3 +140,4 @@ WM_KILLFOCUS → hide window
 - Fuzzy search must stay **synchronous and fast** for small lists; revisit if plugin count grows large
 - `WM_KILLFOCUS` fires on own child windows too — handle carefully in Step 7+
 - Edition 2024: `unsafe extern fn` bodies are no longer implicitly unsafe — calls inside need their own `unsafe {}` block
+- `WM_CLOSE` must hide, not destroy — `WM_DESTROY` is only for explicit quit via tray menu

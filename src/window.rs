@@ -5,16 +5,20 @@ use windows::{
     Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics,
         IDC_ARROW, LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN,
-        TranslateMessage, WM_DESTROY, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
-        WS_VISIBLE,
+        SW_HIDE, ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY, WNDCLASSEXW, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
     },
     core::*,
 };
 
+const WIN_WIDTH_RATIO: f32 = 0.40; // 40% of screen width
+const WIN_MAX_H_RATIO: f32 = 0.33; // max 33% of screen height
+const WIN_TOP_RATIO: f32 = 0.08; // 8% from top of screen
+const QUERY_BAR_HEIGHT: i32 = 48; // placeholder until Step 5 makes height dynamic
+
 pub fn create_and_run() {
     unsafe {
         let hinstance: HINSTANCE = GetModuleHandleW(None).unwrap().into();
-
         let class_name = w!("velo_palette");
 
         let wc = WNDCLASSEXW {
@@ -23,6 +27,7 @@ pub fn create_and_run() {
             hInstance: hinstance,
             lpszClassName: class_name,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap(),
+            // +1 is Win32 convention: tells the system to use this color as a brush
             hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut _),
             ..Default::default()
         };
@@ -32,12 +37,10 @@ pub fn create_and_run() {
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
 
-        let win_w = (screen_w as f32 * 0.40) as i32;
-        let max_h = (screen_h as f32 * 0.33) as i32;
-        let win_h = 48_i32.min(max_h);
-
+        let win_w = (screen_w as f32 * WIN_WIDTH_RATIO) as i32;
+        let win_h = QUERY_BAR_HEIGHT.min((screen_h as f32 * WIN_MAX_H_RATIO) as i32);
         let win_x = (screen_w - win_w) / 2;
-        let win_y = (screen_h as f32 * 0.08) as i32;
+        let win_y = (screen_h as f32 * WIN_TOP_RATIO) as i32;
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -55,7 +58,7 @@ pub fn create_and_run() {
         )
         .unwrap();
 
-        UpdateWindow(hwnd);
+        let _ = UpdateWindow(hwnd);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -73,7 +76,13 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     unsafe {
         match msg {
+            WM_CLOSE => {
+                // Hide instead of closing — process stays alive in tray
+                let _ = ShowWindow(hwnd, SW_HIDE);
+                LRESULT(0)
+            }
             WM_DESTROY => {
+                // Only reached on explicit quit command
                 PostQuitMessage(0);
                 LRESULT(0)
             }
