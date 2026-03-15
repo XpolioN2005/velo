@@ -1,5 +1,6 @@
 // #![windows_subsystem = "windows"]
 
+mod renderer;
 mod window;
 
 fn main() {

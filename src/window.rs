@@ -1,20 +1,23 @@
 use windows::{
     Win32::Foundation::*,
-    Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH, UpdateWindow},
+    Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT, UpdateWindow},
     Win32::System::LibraryLoader::GetModuleHandleW,
     Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics,
-        IDC_ARROW, LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN,
-        SW_HIDE, ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY, WNDCLASSEXW, WS_EX_TOOLWINDOW,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
+        GetSystemMetrics, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
+        RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SetWindowLongPtrW, ShowWindow,
+        TranslateMessage, WM_CLOSE, WM_DESTROY, WM_PAINT, WNDCLASSEXW, WS_EX_TOOLWINDOW,
         WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
     },
     core::*,
 };
 
-const WIN_WIDTH_RATIO: f32 = 0.40; // 40% of screen width
-const WIN_MAX_H_RATIO: f32 = 0.33; // max 33% of screen height
-const WIN_TOP_RATIO: f32 = 0.08; // 8% from top of screen
-const QUERY_BAR_HEIGHT: i32 = 48; // placeholder until Step 5 makes height dynamic
+use crate::renderer::Renderer;
+
+const WIN_WIDTH_RATIO: f32 = 0.40;
+const WIN_MAX_H_RATIO: f32 = 0.33;
+const WIN_TOP_RATIO: f32 = 0.08;
+const QUERY_BAR_HEIGHT: i32 = 48;
 
 pub fn create_and_run() {
     unsafe {
@@ -27,8 +30,7 @@ pub fn create_and_run() {
             hInstance: hinstance,
             lpszClassName: class_name,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap(),
-            // +1 is Win32 convention: tells the system to use this color as a brush
-            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut _),
+            // No background brush — Direct2D owns all painting now
             ..Default::default()
         };
 
@@ -58,6 +60,10 @@ pub fn create_and_run() {
         )
         .unwrap();
 
+        // Create renderer and store it on the window
+        let renderer = Box::new(Renderer::new(hwnd).unwrap());
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(renderer) as isize);
+
         let _ = UpdateWindow(hwnd);
 
         let mut msg = MSG::default();
@@ -76,13 +82,33 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     unsafe {
         match msg {
+            WM_PAINT => {
+                // Retrieve renderer from window userdata
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
+                if !ptr.is_null() {
+                    let renderer = &*ptr;
+                    renderer.begin();
+                    renderer.clear();
+                    renderer.end().unwrap();
+                }
+
+                // Tell Win32 the paint request is satisfied
+                let mut ps = PAINTSTRUCT::default();
+                BeginPaint(hwnd, &mut ps);
+                let _ = EndPaint(hwnd, &ps);
+
+                LRESULT(0)
+            }
             WM_CLOSE => {
-                // Hide instead of closing — process stays alive in tray
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 LRESULT(0)
             }
             WM_DESTROY => {
-                // Only reached on explicit quit command
+                // Clean up renderer before exit
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
+                if !ptr.is_null() {
+                    drop(Box::from_raw(ptr));
+                }
                 PostQuitMessage(0);
                 LRESULT(0)
             }
