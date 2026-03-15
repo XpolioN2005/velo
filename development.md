@@ -1,0 +1,129 @@
+# Palette — Command Palette for Windows
+
+> Living doc. Update as steps complete.
+
+---
+
+## Stack
+
+- **Language:** Rust (stable toolchain)
+- **Win32 bindings:** `windows` crate (latest, no pinned version)
+- **Rendering:** Direct2D + DirectWrite
+- **No:** eframe, egui, wgpu, or any GUI framework
+
+---
+
+## Project Structure
+
+```
+src/
+├── main.rs     — entry point, message loop
+└── window.rs   — window creation, WndProc
+(expand to subfolders only when a module needs multiple files)
+```
+
+---
+
+## Cargo Features — Added Per Step
+
+| Step                            | Features                                                                                            | Status |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | ------ |
+| 1 — Win32 window + message loop | `Win32_UI_WindowsAndMessaging` `Win32_Foundation` `Win32_System_LibraryLoader` `Win32_Graphics_Gdi` | ✅     |
+| 2 — Direct2D render target      | `Win32_Graphics_Direct2D` `Win32_Graphics_Dxgi` `Win32_Graphics_Dxgi_Common`                        | ⬜     |
+| 3 — DirectWrite text            | `Win32_Graphics_DirectWrite`                                                                        | ⬜     |
+| 4 — Keyboard input              | _(covered by Step 1)_                                                                               | ⬜     |
+| 5 — Static command list         | _(no new features)_                                                                                 | ⬜     |
+| 6 — Fuzzy search                | _(no new features)_                                                                                 | ⬜     |
+| 7 — Hotkey + show/hide          | `Win32_UI_Input_KeyboardAndMouse`                                                                   | ⬜     |
+| 8 — Plugin API                  | _(TBD)_                                                                                             | ⬜     |
+
+> **Gotcha:** `WNDCLASSEXW` and `RegisterClassExW` require `Win32_Graphics_Gdi` — not pulled in by `Win32_UI_WindowsAndMessaging` alone.
+
+---
+
+## Message Loop Flow
+
+```
+WM_HOTKEY    → show window, steal focus
+WM_PAINT     → Direct2D draws entire UI
+WM_CHAR      → append char to query, trigger repaint
+WM_KEYDOWN   → backspace, escape, enter, arrow keys
+WM_KILLFOCUS → hide window
+```
+
+---
+
+## Resource Targets
+
+- RAM idle: ~2–5 MB
+- CPU hidden: 0% (sleeps on GetMessage, no polling)
+- Only wakes on: hotkey, keypress, paint
+
+---
+
+## Window Flags (important)
+
+- `WS_POPUP` — borderless
+- `WS_EX_TOOLWINDOW` — no taskbar entry
+- `WS_EX_TOPMOST` — always on top
+- `WS_EX_NOACTIVATE` — careful: conflicts with focus stealing on hotkey, manage explicitly
+
+---
+
+## Build Log
+
+### Step 1 — Blank Win32 window + message loop
+
+- [x] `cargo new --bin velo`
+- [x] Add windows crate with Step 1 features
+- [x] `Win32_Graphics_Gdi` added (required for WNDCLASSEXW)
+- [ ] Create window with correct style flags
+- [ ] Message loop running
+
+### Step 2 — Direct2D render target, clear color
+
+- [ ] COM init (`CoInitializeEx`)
+- [ ] Create D2D1 factory
+- [ ] Create HWND render target
+- [ ] Clear to background color on WM_PAINT
+
+### Step 3 — DirectWrite text, draw query string
+
+- [ ] Create DWrite factory
+- [ ] Create text format (Segoe UI)
+- [ ] Draw placeholder query string
+
+### Step 4 — Keyboard input, update query on WM_CHAR
+
+- [ ] Handle WM_CHAR → append to query string
+- [ ] Handle WM_KEYDOWN → backspace, escape, enter, arrows
+- [ ] Trigger InvalidateRect on change
+
+### Step 5 — Static command list, draw results
+
+- [ ] Define command list in app.rs
+- [ ] Draw list items below query box
+
+### Step 6 — Fuzzy search wired up
+
+- [ ] Filter command list on query string
+- [ ] Highlight matched characters
+
+### Step 7 — Hotkey + show/hide
+
+- [ ] RegisterHotKey
+- [ ] Show/hide window on WM_HOTKEY
+- [ ] Hide on WM_KILLFOCUS
+
+### Step 8 — Plugin registration API
+
+- [ ] TBD — design after Step 7 is solid
+
+---
+
+## Notes & Gotchas
+
+- Direct2D render target must be **cached** on the window struct — never recreate per WM_PAINT or COM objects leak
+- Fuzzy search must stay **synchronous and fast** for small lists; revisit if plugin count grows large
+- `WM_KILLFOCUS` fires on own child windows too — handle carefully in Step 7+
+- Edition 2024: `unsafe extern fn` bodies are no longer implicitly unsafe — calls inside need their own `unsafe {}` block
