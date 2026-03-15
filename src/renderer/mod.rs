@@ -8,23 +8,29 @@ use windows::{
         D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1CreateFactory, ID2D1Factory,
         ID2D1HwndRenderTarget,
     },
+    Win32::Graphics::DirectWrite::{
+        DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory,
+    },
     Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN,
     Win32::UI::WindowsAndMessaging::GetClientRect,
     core::*,
 };
 
+pub mod draw;
+use draw::TextFormat;
+
 pub struct Renderer {
     pub factory: ID2D1Factory,
     pub target: ID2D1HwndRenderTarget,
+    pub dwrite: IDWriteFactory,
+    pub text_ui: TextFormat, // default UI text — Segoe UI 14px
 }
 
 impl Renderer {
     pub fn new(hwnd: HWND) -> Result<Self> {
         unsafe {
-            // Create the D2D factory — single threaded since we have one thread
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
 
-            // Get window size for the render target
             let mut rc = RECT::default();
             GetClientRect(hwnd, &mut rc)?;
 
@@ -33,20 +39,18 @@ impl Renderer {
                 height: (rc.bottom - rc.top) as u32,
             };
 
-            // Render target properties — default pixel format, DPI
             let rtp = D2D1_RENDER_TARGET_PROPERTIES {
                 r#type: Default::default(),
                 pixelFormat: D2D1_PIXEL_FORMAT {
                     format: DXGI_FORMAT_UNKNOWN,
                     alphaMode: D2D1_ALPHA_MODE_UNKNOWN,
                 },
-                dpiX: 0.0, // 0 = use system DPI
+                dpiX: 0.0,
                 dpiY: 0.0,
                 usage: Default::default(),
                 minLevel: Default::default(),
             };
 
-            // HWND render target — draws directly into our window
             let hwnd_rtp = D2D1_HWND_RENDER_TARGET_PROPERTIES {
                 hwnd,
                 pixelSize: size,
@@ -55,22 +59,29 @@ impl Renderer {
 
             let target = factory.CreateHwndRenderTarget(&rtp, &hwnd_rtp)?;
 
-            Ok(Self { factory, target })
+            // DWrite factory — shared type is standard for single-threaded apps
+            let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+
+            // Default UI text format — 14px Segoe UI
+            let text_ui = TextFormat::new(&dwrite, 14.0)?;
+
+            Ok(Self {
+                factory,
+                target,
+                dwrite,
+                text_ui,
+            })
         }
     }
 
-    /// Call at the start of every WM_PAINT
     pub fn begin(&self) {
         unsafe { self.target.BeginDraw() }
     }
 
-    /// Call at the end of every WM_PAINT
-    /// Returns Err if the render target was lost (e.g. display change)
     pub fn end(&self) -> Result<()> {
         unsafe { self.target.EndDraw(None, None) }
     }
 
-    /// Clear the entire target to a solid color
     pub fn clear(&self) {
         unsafe {
             self.target.Clear(Some(&D2D1_COLOR_F {
