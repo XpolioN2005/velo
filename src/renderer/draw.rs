@@ -1,13 +1,14 @@
 use windows::{
-    Win32::Graphics::Direct2D::Common::D2D_RECT_F,
-    Win32::Graphics::Direct2D::Common::D2D1_COLOR_F,
-    Win32::Graphics::Direct2D::{
-        D2D1_BRUSH_PROPERTIES, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
-    },
-    Win32::Graphics::DirectWrite::{
-        DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_WEIGHT_REGULAR, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-        DWRITE_TEXT_ALIGNMENT_LEADING, DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat,
+    Win32::Graphics::{
+        Direct2D::{
+            Common::{D2D_RECT_F, D2D1_COLOR_F},
+            ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
+        },
+        DirectWrite::{
+            DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_REGULAR,
+            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
+            DWRITE_TEXT_ALIGNMENT_TRAILING, IDWriteFactory, IDWriteTextFormat,
+        },
     },
     core::*,
 };
@@ -33,6 +34,42 @@ impl TextFormat {
             // Text left-aligned, vertically centered
             format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
             format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+
+            // Create ellipsis trimming sign
+            let trimming_sign = dwrite.CreateEllipsisTrimmingSign(&format)?;
+            let trimming = windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING {
+                granularity:
+                    windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+                delimiter: 0,
+                delimiterCount: 0,
+            };
+            format.SetTrimming(&trimming, &trimming_sign)?;
+
+            Ok(Self { format })
+        }
+    }
+    pub fn new_right(dwrite: &IDWriteFactory, size: f32) -> Result<Self> {
+        unsafe {
+            let format = dwrite.CreateTextFormat(
+                w!("Segoe UI"),
+                None,
+                DWRITE_FONT_WEIGHT_REGULAR,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                size,
+                w!("en-us"),
+            )?;
+            format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+            format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+
+            let trimming_sign = dwrite.CreateEllipsisTrimmingSign(&format)?;
+            let trimming = windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING {
+                granularity:
+                    windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+                delimiter: 0,
+                delimiterCount: 0,
+            };
+            format.SetTrimming(&trimming, &trimming_sign)?;
 
             Ok(Self { format })
         }

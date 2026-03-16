@@ -1,7 +1,4 @@
-use windows::{
-    Win32::Foundation::RECT, Win32::Graphics::Direct2D::Common::D2D_RECT_F,
-    Win32::UI::WindowsAndMessaging::GetClientRect,
-};
+use windows::{Win32::Foundation::RECT, Win32::UI::WindowsAndMessaging::GetClientRect};
 
 use crate::app::AppState;
 use crate::command::CommandRef;
@@ -15,33 +12,16 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
         let mut rc = RECT::default();
         let _ = GetClientRect(hwnd, &mut rc);
         let w = rc.right as f32;
-        // let h = rc.bottom as f32;
 
-        // Border
         let border_color = if app.focused {
             theme::BORDER_FOCUS
         } else {
             theme::BORDER_UNFOCUS
         };
-        let _ = draw::draw_rect_outline(
-            &renderer.target,
-            D2D_RECT_F {
-                left: 1.0,
-                top: 1.0,
-                right: w - 1.0,
-                bottom: layout::QUERY_BAR_H - 1.0,
-            },
-            border_color,
-            1.5,
-        );
+        let _ =
+            draw::draw_rect_outline(&renderer.target, layout::border_rect(w), border_color, 1.5);
 
-        // Query bar text
-        let text_rect = D2D_RECT_F {
-            left: layout::PADDING_H,
-            top: 0.0,
-            right: w - layout::PADDING_H,
-            bottom: layout::QUERY_BAR_H,
-        };
+        let text_rect = layout::query_bar_rect(w);
         if app.query.is_empty() {
             let _ = draw::draw_text(
                 &renderer.target,
@@ -65,13 +45,11 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
             return;
         }
 
-        // Track when we cross from BuiltIn to User to draw divider
         let mut last_was_builtin = matches!(app.results.first(), Some(CommandRef::BuiltIn(_)));
 
         for (i, cmd_ref) in app.results.iter().enumerate() {
             let is_builtin = matches!(cmd_ref, CommandRef::BuiltIn(_));
 
-            // Divider between sections
             if !is_builtin && last_was_builtin && i > 0 {
                 let _ = draw::draw_rect_filled(
                     &renderer.target,
@@ -83,7 +61,6 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
 
             let row = layout::row_rect(w, i);
 
-            // Selection highlight
             if i == app.selected {
                 let _ = draw::draw_rect_filled(&renderer.target, row, theme::HIGHLIGHT_BG);
             }

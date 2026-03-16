@@ -1,17 +1,26 @@
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 
 pub const QUERY_BAR_H: f32 = 48.0;
-pub const ROW_H: f32 = 56.0;
+pub const ROW_H: f32 = 40.0;
 pub const DIVIDER_H: f32 = 1.0;
 pub const PADDING_H: f32 = 16.0;
 pub const MAX_ROWS: usize = 8;
 
 pub fn query_bar_rect(w: f32) -> D2D_RECT_F {
     D2D_RECT_F {
-        left: 0.0,
+        left: PADDING_H,
         top: 0.0,
-        right: w,
+        right: w - PADDING_H,
         bottom: QUERY_BAR_H,
+    }
+}
+
+pub fn border_rect(w: f32) -> D2D_RECT_F {
+    D2D_RECT_F {
+        left: 1.0,
+        top: 1.0,
+        right: w - 1.0,
+        bottom: QUERY_BAR_H - 1.0,
     }
 }
 
@@ -25,22 +34,21 @@ pub fn row_rect(w: f32, index: usize) -> D2D_RECT_F {
     }
 }
 
-// Name sits in top half of row, description in bottom half
 pub fn name_rect(row: D2D_RECT_F) -> D2D_RECT_F {
     D2D_RECT_F {
         left: row.left + PADDING_H,
-        top: row.top + 8.0,
-        right: row.right - PADDING_H,
-        bottom: row.top + ROW_H * 0.52,
+        top: row.top,
+        right: row.right * 0.6,
+        bottom: row.bottom,
     }
 }
 
 pub fn desc_rect(row: D2D_RECT_F) -> D2D_RECT_F {
     D2D_RECT_F {
-        left: row.left + PADDING_H,
-        top: row.top + ROW_H * 0.52,
+        left: row.right * 0.6,
+        top: row.top,
         right: row.right - PADDING_H,
-        bottom: row.bottom - 8.0,
+        bottom: row.bottom,
     }
 }
 
