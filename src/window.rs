@@ -5,28 +5,37 @@ use windows::{
     Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
         GetSystemMetrics, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
-        RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SetWindowLongPtrW, ShowWindow,
-        TranslateMessage, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT,
-        WM_SETFOCUS, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+        RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SWP_NOMOVE, SWP_NOZORDER,
+        SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR, WM_CLOSE,
+        WM_DESTROY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_SETFOCUS, WM_SIZE, WNDCLASSEXW,
+        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
     },
     core::*,
 };
 
 use crate::app::AppState;
-use crate::renderer::{Renderer, palette};
+use crate::renderer::{Renderer, layout, palette};
 
 const WIN_WIDTH_RATIO: f32 = 0.40;
-const WIN_MAX_H_RATIO: f32 = 0.33;
 const WIN_TOP_RATIO: f32 = 0.08;
-const QUERY_BAR_HEIGHT: i32 = 48;
 
 const VK_BACK: u32 = 0x08;
 const VK_ESCAPE: u32 = 0x1B;
 const VK_RETURN: u32 = 0x0D;
+const VK_UP: u32 = 0x26;
+const VK_DOWN: u32 = 0x28;
 
 struct WindowState {
     renderer: Renderer,
     app: AppState,
+    win_w: i32,
+}
+
+unsafe fn resize_to_results(hwnd: HWND, state: &WindowState) {
+    unsafe {
+        let h = layout::window_height(state.app.results.len());
+        let _ = SetWindowPos(hwnd, None, 0, 0, state.win_w, h, SWP_NOMOVE | SWP_NOZORDER);
+    }
 }
 
 pub fn create_and_run() {
@@ -42,14 +51,13 @@ pub fn create_and_run() {
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap(),
             ..Default::default()
         };
-
         RegisterClassExW(&wc);
 
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
 
         let win_w = (screen_w as f32 * WIN_WIDTH_RATIO) as i32;
-        let win_h = QUERY_BAR_HEIGHT.min((screen_h as f32 * WIN_MAX_H_RATIO) as i32);
+        let win_h = layout::window_height(0);
         let win_x = (screen_w - win_w) / 2;
         let win_y = (screen_h as f32 * WIN_TOP_RATIO) as i32;
 
@@ -72,6 +80,7 @@ pub fn create_and_run() {
         let state = Box::new(WindowState {
             renderer: Renderer::new(hwnd).unwrap(),
             app: AppState::new(),
+            win_w,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
 
@@ -95,6 +104,16 @@ unsafe extern "system" fn wnd_proc(
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
 
         match msg {
+            WM_SIZE => {
+                if !ptr.is_null() {
+                    let w = (lparam.0 & 0xFFFF) as u32;
+                    let h = ((lparam.0 >> 16) & 0xFFFF) as u32;
+                    if w > 0 && h > 0 {
+                        let _ = (*ptr).renderer.resize(w, h);
+                    }
+                }
+                LRESULT(0)
+            }
             WM_SETFOCUS => {
                 if !ptr.is_null() {
                     (*ptr).app.focused = true;
@@ -114,6 +133,7 @@ unsafe extern "system" fn wnd_proc(
                     if let Some(c) = char::from_u32(wparam.0 as u32) {
                         if !c.is_control() {
                             (*ptr).app.push_char(c);
+                            resize_to_results(hwnd, &*ptr);
                             InvalidateRect(Some(hwnd), None, false);
                         }
                     }
@@ -125,14 +145,24 @@ unsafe extern "system" fn wnd_proc(
                     match wparam.0 as u32 {
                         VK_BACK => {
                             (*ptr).app.pop_char();
+                            resize_to_results(hwnd, &*ptr);
                             InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_ESCAPE => {
                             (*ptr).app.clear_query();
+                            resize_to_results(hwnd, &*ptr);
                             let _ = ShowWindow(hwnd, SW_HIDE);
                         }
+                        VK_UP => {
+                            (*ptr).app.select_prev();
+                            InvalidateRect(Some(hwnd), None, false);
+                        }
+                        VK_DOWN => {
+                            (*ptr).app.select_next();
+                            InvalidateRect(Some(hwnd), None, false);
+                        }
                         VK_RETURN => {
-                            // Step 5: will trigger command execution
+                            // Step 6: execute selected command
                         }
                         _ => {}
                     }
@@ -152,6 +182,7 @@ unsafe extern "system" fn wnd_proc(
             WM_CLOSE => {
                 if !ptr.is_null() {
                     (*ptr).app.clear_query();
+                    resize_to_results(hwnd, &*ptr);
                 }
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 LRESULT(0)

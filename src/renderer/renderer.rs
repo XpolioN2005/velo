@@ -3,8 +3,8 @@ use windows::{
     Win32::Graphics::Direct2D::Common::{D2D_SIZE_U, D2D1_ALPHA_MODE_UNKNOWN, D2D1_PIXEL_FORMAT},
     Win32::Graphics::Direct2D::{
         D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES,
-        D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1CreateFactory, ID2D1Factory,
-        ID2D1HwndRenderTarget,
+        D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
+        D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE, D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget,
     },
     Win32::Graphics::DirectWrite::{
         DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory,
@@ -22,6 +22,8 @@ pub struct Renderer {
     pub target: ID2D1HwndRenderTarget,
     pub dwrite: IDWriteFactory,
     pub text_ui: TextFormat,
+    pub text_desc: TextFormat,
+    pub scale: f32,
 }
 
 impl Renderer {
@@ -29,12 +31,18 @@ impl Renderer {
         unsafe {
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
 
+            let mut dpi_x = 0.0f32;
+            let mut dpi_y = 0.0f32;
+            factory.GetDesktopDpi(&mut dpi_x, &mut dpi_y);
+
             let mut rc = RECT::default();
             GetClientRect(hwnd, &mut rc)?;
 
+            // pixelSize must be in physical pixels
+            let scale = dpi_x / 96.0;
             let size = D2D_SIZE_U {
-                width: (rc.right - rc.left) as u32,
-                height: (rc.bottom - rc.top) as u32,
+                width: ((rc.right - rc.left) as f32 * scale) as u32,
+                height: ((rc.bottom - rc.top) as f32 * scale) as u32,
             };
 
             let rtp = D2D1_RENDER_TARGET_PROPERTIES {
@@ -43,8 +51,8 @@ impl Renderer {
                     format: DXGI_FORMAT_UNKNOWN,
                     alphaMode: D2D1_ALPHA_MODE_UNKNOWN,
                 },
-                dpiX: 0.0,
-                dpiY: 0.0,
+                dpiX: dpi_x,
+                dpiY: dpi_y,
                 usage: Default::default(),
                 minLevel: Default::default(),
             };
@@ -56,16 +64,20 @@ impl Renderer {
             };
 
             let target = factory.CreateHwndRenderTarget(&rtp, &hwnd_rtp)?;
+            target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
 
             let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-
-            let text_ui = TextFormat::new(&dwrite, 14.0)?;
+            let text_ui = TextFormat::new(&dwrite, 16.0)?;
+            let text_desc = TextFormat::new(&dwrite, 14.0)?;
+            let scale = dpi_x / 96.0;
 
             Ok(Self {
                 factory,
                 target,
                 dwrite,
                 text_ui,
+                text_desc,
+                scale,
             })
         }
     }
@@ -73,12 +85,18 @@ impl Renderer {
     pub fn begin(&self) {
         unsafe { self.target.BeginDraw() }
     }
-
     pub fn end(&self) -> Result<()> {
         unsafe { self.target.EndDraw(None, None) }
     }
-
     pub fn clear(&self) {
         unsafe { self.target.Clear(Some(&theme::BG)) }
+    }
+    pub fn resize(&self, w: u32, h: u32) -> Result<()> {
+        unsafe {
+            self.target.Resize(&D2D_SIZE_U {
+                width: (w as f32 * self.scale) as u32,
+                height: (h as f32 * self.scale) as u32,
+            })
+        }
     }
 }

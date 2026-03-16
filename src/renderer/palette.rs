@@ -1,12 +1,11 @@
 use windows::{
     Win32::Foundation::RECT, Win32::Graphics::Direct2D::Common::D2D_RECT_F,
-    Win32::UI::WindowsAndMessaging::GetClientRect, core::*,
+    Win32::UI::WindowsAndMessaging::GetClientRect,
 };
 
 use crate::app::AppState;
-use crate::renderer::{Renderer, draw, theme};
-
-const SEARCH_PADDING: f32 = 16.0;
+use crate::command::CommandRef;
+use crate::renderer::{Renderer, draw, layout, theme};
 
 pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::Foundation::HWND) {
     unsafe {
@@ -16,35 +15,33 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
         let mut rc = RECT::default();
         let _ = GetClientRect(hwnd, &mut rc);
         let w = rc.right as f32;
-        let h = rc.bottom as f32;
+        // let h = rc.bottom as f32;
 
-        // Border — changes color based on focus
+        // Border
         let border_color = if app.focused {
             theme::BORDER_FOCUS
         } else {
             theme::BORDER_UNFOCUS
         };
-
         let _ = draw::draw_rect_outline(
             &renderer.target,
             D2D_RECT_F {
                 left: 1.0,
                 top: 1.0,
                 right: w - 1.0,
-                bottom: h - 1.0,
+                bottom: layout::QUERY_BAR_H - 1.0,
             },
             border_color,
             1.5,
         );
 
-        // Query text or placeholder
+        // Query bar text
         let text_rect = D2D_RECT_F {
-            left: SEARCH_PADDING,
+            left: layout::PADDING_H,
             top: 0.0,
-            right: w - SEARCH_PADDING,
-            bottom: h,
+            right: w - layout::PADDING_H,
+            bottom: layout::QUERY_BAR_H,
         };
-
         if app.query.is_empty() {
             let _ = draw::draw_text(
                 &renderer.target,
@@ -60,6 +57,61 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
                 &renderer.text_ui,
                 text_rect,
                 theme::TEXT,
+            );
+        }
+
+        if app.results.is_empty() {
+            renderer.end().unwrap();
+            return;
+        }
+
+        // Track when we cross from BuiltIn to User to draw divider
+        let mut last_was_builtin = matches!(app.results.first(), Some(CommandRef::BuiltIn(_)));
+
+        for (i, cmd_ref) in app.results.iter().enumerate() {
+            let is_builtin = matches!(cmd_ref, CommandRef::BuiltIn(_));
+
+            // Divider between sections
+            if !is_builtin && last_was_builtin && i > 0 {
+                let _ = draw::draw_rect_filled(
+                    &renderer.target,
+                    layout::divider_rect(w, i),
+                    theme::DIVIDER,
+                );
+            }
+            last_was_builtin = is_builtin;
+
+            let row = layout::row_rect(w, i);
+
+            // Selection highlight
+            if i == app.selected {
+                let _ = draw::draw_rect_filled(&renderer.target, row, theme::HIGHLIGHT_BG);
+            }
+
+            let (name, desc) = match cmd_ref {
+                CommandRef::BuiltIn(idx) => {
+                    let cmd = &crate::command::BUILT_INS[*idx];
+                    (cmd.name, cmd.description)
+                }
+                CommandRef::User(idx) => {
+                    let cmd = &app.user_commands[*idx];
+                    (cmd.name.as_str(), cmd.description.as_str())
+                }
+            };
+
+            let _ = draw::draw_text(
+                &renderer.target,
+                name,
+                &renderer.text_ui,
+                layout::name_rect(row),
+                theme::TEXT,
+            );
+            let _ = draw::draw_text(
+                &renderer.target,
+                desc,
+                &renderer.text_desc,
+                layout::desc_rect(row),
+                theme::TEXT_DESC,
             );
         }
 

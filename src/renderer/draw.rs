@@ -79,3 +79,15 @@ pub fn draw_rect_outline(
         Ok(())
     }
 }
+
+pub fn draw_rect_filled(
+    target: &ID2D1HwndRenderTarget,
+    rect: D2D_RECT_F,
+    color: D2D1_COLOR_F,
+) -> Result<()> {
+    unsafe {
+        let brush: ID2D1SolidColorBrush = target.CreateSolidColorBrush(&color, None)?;
+        target.FillRectangle(&rect, &brush);
+        Ok(())
+    }
+}

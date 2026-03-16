@@ -42,3 +42,16 @@ pub const HIGHLIGHT_BG: D2D1_COLOR_F = D2D1_COLOR_F {
     b: 0.24,
     a: 1.0,
 };
+
+pub const DIVIDER: D2D1_COLOR_F = D2D1_COLOR_F {
+    r: 0.20,
+    g: 0.20,
+    b: 0.22,
+    a: 1.0,
+};
+pub const TEXT_DESC: D2D1_COLOR_F = D2D1_COLOR_F {
+    r: 0.45,
+    g: 0.45,
+    b: 0.50,
+    a: 1.0,
+};
