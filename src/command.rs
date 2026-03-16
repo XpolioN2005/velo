@@ -15,7 +15,7 @@ pub enum InternalAction {
 #[derive(Clone, Copy)]
 pub enum BuiltInAction {
     Internal(InternalAction),
-    // LaunchProcess and OpenUrl only make sense for user commands
+    LaunchProcess(&'static str),
 }
 
 pub struct BuiltInCommand {
@@ -68,6 +68,13 @@ pub static BUILT_INS: &[BuiltInCommand] = &[
         category: Category::General,
         action: BuiltInAction::Internal(InternalAction::Quit), // placeholder action
     },
+    BuiltInCommand {
+        name: "Open PowerShell",
+        description: "Launch PowerShell terminal",
+        aliases: &["powershell", "ps", "terminal"],
+        category: Category::General,
+        action: BuiltInAction::LaunchProcess("powershell.exe"),
+    },
 ];
 
 // What window.rs should do after a command runs
@@ -76,5 +83,7 @@ pub enum ExecuteResult {
     Quit,
     Hide,
     ReloadConfig,
+    Launch(String),
+    OpenUrl(String),
     Nothing,
 }

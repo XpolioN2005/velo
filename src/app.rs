@@ -1,4 +1,6 @@
-use crate::command::{BUILT_INS, BuiltInAction, CommandRef, InternalAction, UserCommand};
+use crate::command::{
+    BUILT_INS, BuiltInAction, CommandRef, InternalAction, UserAction, UserCommand,
+};
 use crate::config::load_user_commands;
 
 pub struct AppState {
@@ -54,19 +56,22 @@ impl AppState {
     }
 
     pub fn execute_selected(&self) -> crate::command::ExecuteResult {
+        use crate::command::ExecuteResult;
         if self.results.is_empty() {
-            return crate::command::ExecuteResult::Nothing;
+            return ExecuteResult::Nothing;
         }
         match self.results[self.selected] {
             CommandRef::BuiltIn(idx) => match BUILT_INS[idx].action {
-                BuiltInAction::Internal(InternalAction::Quit) => {
-                    crate::command::ExecuteResult::Quit
-                }
+                BuiltInAction::Internal(InternalAction::Quit) => ExecuteResult::Quit,
                 BuiltInAction::Internal(InternalAction::ReloadConfig) => {
-                    crate::command::ExecuteResult::ReloadConfig
+                    ExecuteResult::ReloadConfig
                 }
+                BuiltInAction::LaunchProcess(cmd) => ExecuteResult::Launch(cmd.to_string()),
             },
-            CommandRef::User(_) => crate::command::ExecuteResult::Hide,
+            CommandRef::User(idx) => match &self.user_commands[idx].action {
+                UserAction::LaunchProcess(cmd) => ExecuteResult::Launch(cmd.to_string()),
+                UserAction::OpenUrl(url) => ExecuteResult::OpenUrl(url.clone()),
+            },
         }
     }
 

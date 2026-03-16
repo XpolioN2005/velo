@@ -17,21 +17,23 @@
 
 ```
 src/
-├── main.rs     — entry point, message loop
+├── main.rs     — entry point, DPI awareness, message loop
 ├── window.rs   — Win32 messages only, no draw logic
-├── app.rs      — app state (query, focus, selected index)
+├── app.rs      — app state (query, focus, selected index, results)
+├── command.rs  — Command structs, actions, ExecuteResult
+├── config.rs   — TOML config loader (%APPDATA%\velo\commands.toml)
 └── renderer/
     ├── mod.rs       — module declarations + re-exports only
     ├── renderer.rs  — Renderer struct (D2D factory, render target, DWrite)
-    ├── draw.rs      — raw draw primitives (text, rect, outline)
-    ├── layout.rs    — region math (Step 5+)
+    ├── draw.rs      — raw draw primitives (text, rect, outline, fill)
+    ├── layout.rs    — region math
     ├── theme.rs     — all color constants
     └── palette.rs   — full UI assembly, calls draw + theme
 ```
 
 ---
 
-## Cargo Features — Added Per Step
+## Cargo Features
 
 | Step                            | Features                                                                                                      | Status |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------ |
@@ -39,26 +41,24 @@ src/
 | 2 — Direct2D render target      | `Win32_Graphics_Direct2D` `Win32_Graphics_Dxgi` `Win32_Graphics_Dxgi_Common` `Win32_Graphics_Direct2D_Common` | ✅     |
 | 3 — DirectWrite text            | `Win32_Graphics_DirectWrite`                                                                                  | ✅     |
 | 4 — Keyboard input              | _(covered by Step 1)_                                                                                         | ✅     |
-| 5 — Static command list         | _(no new features)_                                                                                           | ⬜     |
+| 5 — Static command list         | _(no new features)_                                                                                           | ✅     |
 | 6 — Fuzzy search                | _(no new features)_                                                                                           | ⬜     |
-| 7 — Hotkey + show/hide          | `Win32_UI_Input_KeyboardAndMouse`                                                                             | ⬜     |
+| 7 — Hotkey + show/hide          | `Win32_UI_Input_KeyboardAndMouse` `Win32_UI_HiDpi`                                                            | ✅     |
 | 7.5 — System tray icon          | `Win32_UI_Shell` _(TBD)_                                                                                      | ⬜     |
 | 8 — Plugin API                  | _(TBD)_                                                                                                       | ⬜     |
-
-> **Gotcha:** `WNDCLASSEXW` and `RegisterClassExW` require `Win32_Graphics_Gdi` — not pulled in by `Win32_UI_WindowsAndMessaging` alone.
-> **Gotcha:** `D2D_SIZE_U` not `D2D1_SIZE_U` — lives in `Win32_Graphics_Direct2D_Common`.
 
 ---
 
 ## Message Loop Flow
 
 ```
-WM_HOTKEY    → show window, steal focus
+WM_HOTKEY    → clear query, show window, steal focus (Ctrl+Alt+P)
 WM_PAINT     → palette::draw_palette() — full UI redraw
-WM_CHAR      → append char to query, InvalidateRect
+WM_CHAR      → append char to query, resize, InvalidateRect
 WM_KEYDOWN   → backspace, escape, enter, arrow keys
 WM_SETFOCUS  → focused = true, InvalidateRect
-WM_KILLFOCUS → focused = false, InvalidateRect
+WM_KILLFOCUS → focused = false, clear query, hide window
+WM_SIZE      → renderer.resize(w, h) — keeps D2D in sync with window
 WM_CLOSE     → clear query, hide window (process stays alive)
 WM_DESTROY   → only on explicit quit — PostQuitMessage
 ```
@@ -82,6 +82,46 @@ WM_DESTROY   → only on explicit quit — PostQuitMessage
 
 ---
 
+## Data Model
+
+### `BuiltInCommand` — zero heap, lives in binary
+
+```
+name:        &'static str
+description: &'static str
+aliases:     &'static [&'static str]
+category:    Category
+action:      BuiltInAction
+```
+
+### `UserCommand` — heap, loaded from TOML at startup
+
+```
+name:        String
+description: String
+aliases:     Vec<String>
+category:    Category
+action:      UserAction
+```
+
+### `CommandRef` — lightweight index, no cloning
+
+```
+BuiltIn(usize) | User(usize)
+```
+
+### `ExecuteResult`
+
+```
+Quit | Hide | ReloadConfig | Nothing
+```
+
+### Config path
+
+`%APPDATA%\velo\commands.toml` — missing file is silent, not an error
+
+---
+
 ## Build Log
 
 ### Step 1 — Blank Win32 window + message loop ✅
@@ -96,7 +136,6 @@ WM_DESTROY   → only on explicit quit — PostQuitMessage
 
 ### Step 2 — Direct2D render target, clear color ✅
 
-- [x] Add Step 2 cargo features
 - [x] Create D2D1 factory
 - [x] Create HWND render target (cached on Renderer struct)
 - [x] Clear to `theme::BG` on WM_PAINT
@@ -105,38 +144,42 @@ WM_DESTROY   → only on explicit quit — PostQuitMessage
 ### Step 3 — DirectWrite text, draw query string ✅
 
 - [x] Create DWrite factory
-- [x] Create TextFormat struct in draw.rs (Segoe UI 14px)
+- [x] Create TextFormat struct in draw.rs (Segoe UI)
 - [x] Draw "Search..." placeholder text on dark background
 - [x] renderer/draw.rs split out for all draw primitives
-- [x] renderer/renderer.rs owns Renderer struct (mod.rs is init only)
+- [x] renderer/renderer.rs owns Renderer struct
 
 ### Step 4 — Keyboard input ✅
 
-- [x] WM_CHAR → append char to query string
-- [x] WM_KEYDOWN → backspace deletes, escape hides + clears, enter stubbed
-- [x] WM_SETFOCUS / WM_KILLFOCUS → toggle focus state, repaint
-- [x] Border color changes on focus/unfocus (theme::BORDER_FOCUS / BORDER_UNFOCUS)
-- [x] AppState initialized with focused = true (window starts focused)
-- [x] All colors moved to theme.rs, all paint logic moved to palette.rs
+- [x] WM_CHAR → append char to query string (max 100 chars)
+- [x] WM_KEYDOWN → backspace, escape hides + clears, enter executes, arrow keys
+- [x] WM_SETFOCUS / WM_KILLFOCUS → toggle focus, hide on lose focus
+- [x] Border drawn around query bar only, changes color on focus/unfocus
 
-### Step 5 — Static command list, draw results
+### Step 5 — Command list + result rows ✅
 
-- [ ] Add command list to app.rs (name, description, action)
-- [ ] layout.rs — calculate search bar + result row regions
-- [ ] Draw result rows in palette.rs
-- [ ] Dynamic window height based on result count via SetWindowPos
-- [ ] Arrow keys move selected index up/down
+- [x] `command.rs` — BuiltInCommand (&'static), UserCommand (heap), CommandRef, ExecuteResult
+- [x] `config.rs` — TOML loader via serde, %APPDATA%\velo\commands.toml
+- [x] `layout.rs` — query bar, row rects, name/desc split, window_height
+- [x] Result rows drawn in palette.rs — name + description two-line layout
+- [x] Dynamic window height via SetWindowPos + WM_SIZE → renderer.resize()
+- [x] Divider between built-in and user command sections
+- [x] Arrow keys move selected index, selection highlight drawn
+- [x] Enter executes selected command via execute_selected() → ExecuteResult
 
 ### Step 6 — Fuzzy search wired up
 
-- [ ] Filter command list on query string
+- [ ] Replace substring match with fuzzy scoring
 - [ ] Highlight matched characters in results
 
-### Step 7 — Hotkey + show/hide
+### Step 7 — Hotkey + show/hide ✅
 
-- [ ] RegisterHotKey
-- [ ] Show/hide window on WM_HOTKEY
-- [ ] Hide on WM_KILLFOCUS
+- [x] RegisterHotKey — Ctrl+Alt+P
+- [x] WM_HOTKEY → clear query, show, SetForegroundWindow, SetFocus
+- [x] WM_KILLFOCUS → hide + clear query
+- [x] DPI awareness — SetProcessDpiAwarenessContext at startup
+- [x] ClearType text antialiasing
+- [x] GetDesktopDpi → render target DPI, physical pixel size on init and resize
 
 ### Step 7.5 — System tray icon
 
@@ -154,9 +197,12 @@ WM_DESTROY   → only on explicit quit — PostQuitMessage
 ## Notes & Gotchas
 
 - Direct2D render target must be **cached** on Renderer — never recreate per WM_PAINT or COM objects leak
+- `WM_SIZE` must call `renderer.resize()` — without it D2D stretches content after SetWindowPos
+- `pixelSize` in render target init must be physical pixels (logical × scale) — not logical pixels
+- `resize()` receives logical pixels from WM_SIZE lparam — must multiply by scale before passing to D2D
 - Fuzzy search must stay **synchronous and fast** for small lists; revisit if plugin count grows large
-- `WM_KILLFOCUS` fires on own child windows too — handle carefully in Step 7+
-- Edition 2024: `unsafe extern fn` bodies are no longer implicitly unsafe — calls inside need their own `unsafe {}` block
+- `WM_KILLFOCUS` fires on own child windows too — handle carefully in Step 7.5+
+- Edition 2024: `unsafe extern fn` bodies need explicit `unsafe {}` inside
 - `WM_CLOSE` must hide, not destroy — `WM_DESTROY` is only for explicit quit via tray menu
-- Brush creation in draw_text is per-call for now — optimize to cached brushes in theme.rs at Step 5
-- `AppState::new()` sets `focused: true` — window starts focused, avoids wrong border color on first paint
+- `Box::leak` used for LaunchProcess strings from config — small, lives for program lifetime, avoids lifetime params
+- `results: Vec<CommandRef>` — indices not clones, rebuilt on every keystroke synchronously

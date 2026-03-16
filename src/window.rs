@@ -34,9 +34,32 @@ const VK_DOWN: u32 = 0x28;
 const HOTKEY_ID: i32 = 1;
 
 struct WindowState {
-    renderer: Renderer,
+    renderer: Option<Renderer>, // None when hidden
     app: AppState,
     win_w: i32,
+}
+
+unsafe fn hide(hwnd: HWND, ptr: *mut WindowState) {
+    unsafe {
+        (*ptr).app.clear_query();
+        let h = layout::window_height(0);
+        let _ = SetWindowPos(hwnd, None, 0, 0, (*ptr).win_w, h, SWP_NOMOVE | SWP_NOZORDER);
+        (*ptr).renderer = None; // drop D2D resources
+        let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+}
+
+unsafe fn show(hwnd: HWND, ptr: *mut WindowState) {
+    unsafe {
+        // Recreate renderer if dropped
+        if (*ptr).renderer.is_none() {
+            (*ptr).renderer = Renderer::new(hwnd).ok();
+        }
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetFocus(Some(hwnd));
+        let _ = InvalidateRect(Some(hwnd), None, false);
+    }
 }
 
 unsafe fn resize_to_results(hwnd: HWND, state: &WindowState) {
@@ -86,7 +109,7 @@ pub fn create_and_run() {
         .unwrap();
 
         let state = Box::new(WindowState {
-            renderer: Renderer::new(hwnd).unwrap(),
+            renderer: Renderer::new(hwnd).ok(),
             app: AppState::new(),
             win_w,
         });
@@ -115,21 +138,18 @@ unsafe extern "system" fn wnd_proc(
         match msg {
             WM_HOTKEY => {
                 if wparam.0 as i32 == HOTKEY_ID && !ptr.is_null() {
-                    (*ptr).app.clear_query();
-                    resize_to_results(hwnd, &*ptr);
-                    let _ = ShowWindow(hwnd, SW_SHOW);
-                    let _ = SetForegroundWindow(hwnd);
-                    let _ = SetFocus(Some(hwnd));
-                    let _ = InvalidateRect(Some(hwnd), None, false);
+                    show(hwnd, ptr);
                 }
                 LRESULT(0)
             }
             WM_SIZE => {
                 if !ptr.is_null() {
-                    let w = (lparam.0 & 0xFFFF) as u32;
-                    let h = ((lparam.0 >> 16) & 0xFFFF) as u32;
-                    if w > 0 && h > 0 {
-                        let _ = (*ptr).renderer.resize(w, h);
+                    if let Some(r) = &(*ptr).renderer {
+                        let w = (lparam.0 & 0xFFFF) as u32;
+                        let h = ((lparam.0 >> 16) & 0xFFFF) as u32;
+                        if w > 0 && h > 0 {
+                            let _ = r.resize(w, h);
+                        }
                     }
                 }
                 LRESULT(0)
@@ -144,9 +164,7 @@ unsafe extern "system" fn wnd_proc(
             WM_KILLFOCUS => {
                 if !ptr.is_null() {
                     (*ptr).app.focused = false;
-                    (*ptr).app.clear_query();
-                    resize_to_results(hwnd, &*ptr);
-                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    hide(hwnd, ptr);
                 }
                 LRESULT(0)
             }
@@ -171,9 +189,7 @@ unsafe extern "system" fn wnd_proc(
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_ESCAPE => {
-                            (*ptr).app.clear_query();
-                            resize_to_results(hwnd, &*ptr);
-                            let _ = ShowWindow(hwnd, SW_HIDE);
+                            hide(hwnd, ptr);
                         }
                         VK_UP => {
                             (*ptr).app.select_prev();
@@ -189,11 +205,14 @@ unsafe extern "system" fn wnd_proc(
                                     PostQuitMessage(0);
                                 }
                                 ExecuteResult::Hide => {
-                                    (*ptr).app.clear_query();
-                                    resize_to_results(hwnd, &*ptr);
-                                    let _ = ShowWindow(hwnd, SW_HIDE);
+                                    hide(hwnd, ptr);
                                 }
                                 ExecuteResult::ReloadConfig => { /* Step 8 */ }
+                                ExecuteResult::Launch(cmd) => {
+                                    let _ = std::process::Command::new(&cmd).spawn();
+                                    hide(hwnd, ptr);
+                                }
+                                ExecuteResult::OpenUrl(_) => { /* next */ }
                                 ExecuteResult::Nothing => {}
                             }
                         }
@@ -204,8 +223,9 @@ unsafe extern "system" fn wnd_proc(
             }
             WM_PAINT => {
                 if !ptr.is_null() {
-                    let state = &*ptr;
-                    palette::draw_palette(&state.renderer, &state.app, hwnd);
+                    if let Some(r) = &(*ptr).renderer {
+                        palette::draw_palette(r, &(*ptr).app, hwnd);
+                    }
                 }
                 let mut ps = PAINTSTRUCT::default();
                 BeginPaint(hwnd, &mut ps);
@@ -214,10 +234,8 @@ unsafe extern "system" fn wnd_proc(
             }
             WM_CLOSE => {
                 if !ptr.is_null() {
-                    (*ptr).app.clear_query();
-                    resize_to_results(hwnd, &*ptr);
+                    hide(hwnd, ptr);
                 }
-                let _ = ShowWindow(hwnd, SW_HIDE);
                 LRESULT(0)
             }
             WM_DESTROY => {
