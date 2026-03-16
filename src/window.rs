@@ -1,14 +1,20 @@
 use windows::{
-    Win32::Foundation::*,
-    Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, UpdateWindow},
-    Win32::System::LibraryLoader::GetModuleHandleW,
-    Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
-        GetSystemMetrics, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
-        RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SWP_NOMOVE, SWP_NOZORDER,
-        SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR, WM_CLOSE,
-        WM_DESTROY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_SETFOCUS, WM_SIZE, WNDCLASSEXW,
-        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, UpdateWindow},
+        System::LibraryLoader::GetModuleHandleW,
+        UI::{
+            Input::KeyboardAndMouse::{MOD_ALT, MOD_CONTROL, RegisterHotKey, SetFocus, VK_P},
+            WindowsAndMessaging::{
+                CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
+                GetSystemMetrics, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
+                RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOMOVE,
+                SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+                TranslateMessage, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN,
+                WM_KILLFOCUS, WM_PAINT, WM_SETFOCUS, WM_SIZE, WNDCLASSEXW, WS_EX_TOOLWINDOW,
+                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+            },
+        },
     },
     core::*,
 };
@@ -24,6 +30,8 @@ const VK_ESCAPE: u32 = 0x1B;
 const VK_RETURN: u32 = 0x0D;
 const VK_UP: u32 = 0x26;
 const VK_DOWN: u32 = 0x28;
+
+const HOTKEY_ID: i32 = 1;
 
 struct WindowState {
     renderer: Renderer,
@@ -85,6 +93,7 @@ pub fn create_and_run() {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
 
         let _ = UpdateWindow(hwnd);
+        let _ = RegisterHotKey(Some(hwnd), HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_P.0 as u32);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -104,6 +113,17 @@ unsafe extern "system" fn wnd_proc(
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
 
         match msg {
+            WM_HOTKEY => {
+                if wparam.0 as i32 == HOTKEY_ID && !ptr.is_null() {
+                    (*ptr).app.clear_query();
+                    resize_to_results(hwnd, &*ptr);
+                    let _ = ShowWindow(hwnd, SW_SHOW);
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = SetFocus(Some(hwnd));
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
+                LRESULT(0)
+            }
             WM_SIZE => {
                 if !ptr.is_null() {
                     let w = (lparam.0 & 0xFFFF) as u32;
@@ -117,14 +137,16 @@ unsafe extern "system" fn wnd_proc(
             WM_SETFOCUS => {
                 if !ptr.is_null() {
                     (*ptr).app.focused = true;
-                    InvalidateRect(Some(hwnd), None, false);
+                    let _ = InvalidateRect(Some(hwnd), None, false);
                 }
                 LRESULT(0)
             }
             WM_KILLFOCUS => {
                 if !ptr.is_null() {
                     (*ptr).app.focused = false;
-                    InvalidateRect(Some(hwnd), None, false);
+                    (*ptr).app.clear_query();
+                    resize_to_results(hwnd, &*ptr);
+                    let _ = ShowWindow(hwnd, SW_HIDE);
                 }
                 LRESULT(0)
             }
@@ -134,7 +156,7 @@ unsafe extern "system" fn wnd_proc(
                         if !c.is_control() {
                             (*ptr).app.push_char(c);
                             resize_to_results(hwnd, &*ptr);
-                            InvalidateRect(Some(hwnd), None, false);
+                            let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                     }
                 }
@@ -146,7 +168,7 @@ unsafe extern "system" fn wnd_proc(
                         VK_BACK => {
                             (*ptr).app.pop_char();
                             resize_to_results(hwnd, &*ptr);
-                            InvalidateRect(Some(hwnd), None, false);
+                            let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_ESCAPE => {
                             (*ptr).app.clear_query();
@@ -155,11 +177,11 @@ unsafe extern "system" fn wnd_proc(
                         }
                         VK_UP => {
                             (*ptr).app.select_prev();
-                            InvalidateRect(Some(hwnd), None, false);
+                            let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_DOWN => {
                             (*ptr).app.select_next();
-                            InvalidateRect(Some(hwnd), None, false);
+                            let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_RETURN => {
                             match (*ptr).app.execute_selected() {
