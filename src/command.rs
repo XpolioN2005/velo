@@ -69,3 +69,12 @@ pub static BUILT_INS: &[BuiltInCommand] = &[
         action: BuiltInAction::Internal(InternalAction::Quit), // placeholder action
     },
 ];
+
+// What window.rs should do after a command runs
+#[derive(Clone)]
+pub enum ExecuteResult {
+    Quit,
+    Hide,
+    ReloadConfig,
+    Nothing,
+}

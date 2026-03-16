@@ -13,8 +13,8 @@ use windows::{
     core::*,
 };
 
-use crate::app::AppState;
 use crate::renderer::{Renderer, layout, palette};
+use crate::{app::AppState, command::ExecuteResult};
 
 const WIN_WIDTH_RATIO: f32 = 0.40;
 const WIN_TOP_RATIO: f32 = 0.08;
@@ -162,7 +162,18 @@ unsafe extern "system" fn wnd_proc(
                             InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_RETURN => {
-                            // Step 6: execute selected command
+                            match (*ptr).app.execute_selected() {
+                                ExecuteResult::Quit => {
+                                    PostQuitMessage(0);
+                                }
+                                ExecuteResult::Hide => {
+                                    (*ptr).app.clear_query();
+                                    resize_to_results(hwnd, &*ptr);
+                                    let _ = ShowWindow(hwnd, SW_HIDE);
+                                }
+                                ExecuteResult::ReloadConfig => { /* Step 8 */ }
+                                ExecuteResult::Nothing => {}
+                            }
                         }
                         _ => {}
                     }

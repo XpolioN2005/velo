@@ -1,4 +1,4 @@
-use crate::command::{BUILT_INS, CommandRef, UserCommand};
+use crate::command::{BUILT_INS, BuiltInAction, CommandRef, InternalAction, UserCommand};
 use crate::config::load_user_commands;
 
 pub struct AppState {
@@ -6,7 +6,7 @@ pub struct AppState {
     pub focused: bool,
     pub selected: usize,
     pub user_commands: Vec<UserCommand>,
-    pub results: Vec<CommandRef>, // filtered indices, rebuilt on every keystroke
+    pub results: Vec<CommandRef>,
 }
 
 impl AppState {
@@ -53,26 +53,37 @@ impl AppState {
         self.selected = self.selected.saturating_sub(1);
     }
 
-    // Rebuild results from current query — called on every query change.
-    // Empty query = show all. Non-empty = simple substring match for now
-    // (fuzzy in Step 6).
+    pub fn execute_selected(&self) -> crate::command::ExecuteResult {
+        if self.results.is_empty() {
+            return crate::command::ExecuteResult::Nothing;
+        }
+        match self.results[self.selected] {
+            CommandRef::BuiltIn(idx) => match BUILT_INS[idx].action {
+                BuiltInAction::Internal(InternalAction::Quit) => {
+                    crate::command::ExecuteResult::Quit
+                }
+                BuiltInAction::Internal(InternalAction::ReloadConfig) => {
+                    crate::command::ExecuteResult::ReloadConfig
+                }
+            },
+            CommandRef::User(_) => crate::command::ExecuteResult::Hide,
+        }
+    }
+
     fn rebuild_results(&mut self) {
         self.results.clear();
-
         if self.query.is_empty() {
-            return; // show nothing until user types
+            return;
         }
         let q = self.query.to_lowercase();
-
         for (i, cmd) in BUILT_INS.iter().enumerate() {
-            if q.is_empty() || matches_query(cmd.name, cmd.aliases, &q) {
+            if matches_query(cmd.name, cmd.aliases, &q) {
                 self.results.push(CommandRef::BuiltIn(i));
             }
         }
-
         for (i, cmd) in self.user_commands.iter().enumerate() {
             let aliases: Vec<&str> = cmd.aliases.iter().map(|s| s.as_str()).collect();
-            if q.is_empty() || matches_query(&cmd.name, &aliases, &q) {
+            if matches_query(&cmd.name, &aliases, &q) {
                 self.results.push(CommandRef::User(i));
             }
         }
