@@ -1,33 +1,33 @@
 use windows::{
     Win32::Foundation::*,
-    Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F},
-    Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT, UpdateWindow},
+    Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, UpdateWindow},
     Win32::System::LibraryLoader::GetModuleHandleW,
     Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetClientRect,
-        GetMessageW, GetSystemMetrics, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG,
-        PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SetWindowLongPtrW,
-        ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_PAINT, WNDCLASSEXW,
-        WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
+        GetSystemMetrics, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
+        RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SetWindowLongPtrW, ShowWindow,
+        TranslateMessage, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT,
+        WM_SETFOCUS, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
     },
     core::*,
 };
 
-use crate::renderer::{Renderer, draw};
+use crate::app::AppState;
+use crate::renderer::{Renderer, palette};
 
 const WIN_WIDTH_RATIO: f32 = 0.40;
 const WIN_MAX_H_RATIO: f32 = 0.33;
 const WIN_TOP_RATIO: f32 = 0.08;
 const QUERY_BAR_HEIGHT: i32 = 48;
 
-// Padding and text color for the search placeholder
-const SEARCH_PADDING: f32 = 16.0;
-const COLOR_TEXT_DIM: D2D1_COLOR_F = D2D1_COLOR_F {
-    r: 0.50,
-    g: 0.50,
-    b: 0.55,
-    a: 1.0,
-};
+const VK_BACK: u32 = 0x08;
+const VK_ESCAPE: u32 = 0x1B;
+const VK_RETURN: u32 = 0x0D;
+
+struct WindowState {
+    renderer: Renderer,
+    app: AppState,
+}
 
 pub fn create_and_run() {
     unsafe {
@@ -69,8 +69,11 @@ pub fn create_and_run() {
         )
         .unwrap();
 
-        let renderer = Box::new(Renderer::new(hwnd).unwrap());
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(renderer) as isize);
+        let state = Box::new(WindowState {
+            renderer: Renderer::new(hwnd).unwrap(),
+            app: AppState::new(),
+        });
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
 
         let _ = UpdateWindow(hwnd);
 
@@ -89,46 +92,71 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     unsafe {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
+
         match msg {
-            WM_PAINT => {
-                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
+            WM_SETFOCUS => {
                 if !ptr.is_null() {
-                    let renderer = &*ptr;
-                    renderer.begin();
-                    renderer.clear();
-
-                    let mut rc = RECT::default();
-                    let _ = GetClientRect(hwnd, &mut rc);
-
-                    let rect = D2D_RECT_F {
-                        left: SEARCH_PADDING,
-                        top: 0.0,
-                        right: rc.right as f32 - SEARCH_PADDING,
-                        bottom: rc.bottom as f32,
-                    };
-
-                    let _ = draw::draw_text(
-                        &renderer.target,
-                        "Search...",
-                        &renderer.text_ui,
-                        rect,
-                        COLOR_TEXT_DIM,
-                    );
-
-                    renderer.end().unwrap();
+                    (*ptr).app.focused = true;
+                    InvalidateRect(Some(hwnd), None, false);
                 }
-
+                LRESULT(0)
+            }
+            WM_KILLFOCUS => {
+                if !ptr.is_null() {
+                    (*ptr).app.focused = false;
+                    InvalidateRect(Some(hwnd), None, false);
+                }
+                LRESULT(0)
+            }
+            WM_CHAR => {
+                if !ptr.is_null() {
+                    if let Some(c) = char::from_u32(wparam.0 as u32) {
+                        if !c.is_control() {
+                            (*ptr).app.push_char(c);
+                            InvalidateRect(Some(hwnd), None, false);
+                        }
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_KEYDOWN => {
+                if !ptr.is_null() {
+                    match wparam.0 as u32 {
+                        VK_BACK => {
+                            (*ptr).app.pop_char();
+                            InvalidateRect(Some(hwnd), None, false);
+                        }
+                        VK_ESCAPE => {
+                            (*ptr).app.clear_query();
+                            let _ = ShowWindow(hwnd, SW_HIDE);
+                        }
+                        VK_RETURN => {
+                            // Step 5: will trigger command execution
+                        }
+                        _ => {}
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_PAINT => {
+                if !ptr.is_null() {
+                    let state = &*ptr;
+                    palette::draw_palette(&state.renderer, &state.app, hwnd);
+                }
                 let mut ps = PAINTSTRUCT::default();
                 BeginPaint(hwnd, &mut ps);
                 let _ = EndPaint(hwnd, &ps);
                 LRESULT(0)
             }
             WM_CLOSE => {
+                if !ptr.is_null() {
+                    (*ptr).app.clear_query();
+                }
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 LRESULT(0)
             }
             WM_DESTROY => {
-                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
                 if !ptr.is_null() {
                     drop(Box::from_raw(ptr));
                 }

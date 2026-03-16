@@ -66,3 +66,16 @@ pub fn draw_text(
         Ok(())
     }
 }
+
+pub fn draw_rect_outline(
+    target: &ID2D1HwndRenderTarget,
+    rect: D2D_RECT_F,
+    color: D2D1_COLOR_F,
+    width: f32,
+) -> Result<()> {
+    unsafe {
+        let brush: ID2D1SolidColorBrush = target.CreateSolidColorBrush(&color, None)?;
+        target.DrawRectangle(&rect, &brush, width, None);
+        Ok(())
+    }
+}
