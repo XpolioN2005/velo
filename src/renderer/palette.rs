@@ -1,6 +1,6 @@
 use windows::{Win32::Foundation::RECT, Win32::UI::WindowsAndMessaging::GetClientRect};
 
-use crate::app::{AppState, InputMode};
+use crate::app::{AppState, InputMode, MatchedCommand};
 use crate::command::CommandRef;
 use crate::renderer::{Renderer, draw, layout, theme};
 
@@ -65,15 +65,18 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
             }
         }
 
-        // hide results in ArgInput mode
         if app.results.is_empty() || matches!(app.mode, InputMode::ArgInput { .. }) {
             renderer.end().unwrap();
             return;
         }
 
-        let mut last_was_builtin = matches!(app.results.first(), Some(CommandRef::BuiltIn(_)));
+        let mut last_was_builtin = matches!(
+            app.results.first().map(|m| m.cmd_ref),
+            Some(CommandRef::BuiltIn(_))
+        );
 
-        for (i, cmd_ref) in app.results.iter().enumerate() {
+        for (i, matched) in app.results.iter().enumerate() {
+            let cmd_ref = matched.cmd_ref;
             let is_builtin = matches!(cmd_ref, CommandRef::BuiltIn(_));
 
             if !is_builtin && last_was_builtin && i > 0 {
@@ -93,21 +96,24 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
 
             let (name, desc) = match cmd_ref {
                 CommandRef::BuiltIn(idx) => {
-                    let cmd = &crate::command::BUILT_INS[*idx];
+                    let cmd = &crate::command::BUILT_INS[idx];
                     (cmd.name, cmd.description)
                 }
                 CommandRef::User(idx) => {
-                    let cmd = &app.user_commands[*idx];
+                    let cmd = &app.user_commands[idx];
                     (cmd.name.as_str(), cmd.description.as_str())
                 }
             };
 
-            let _ = draw::draw_text(
+            let _ = draw::draw_text_highlighted(
                 &renderer.target,
+                &renderer.dwrite,
                 name,
                 &renderer.text_ui,
                 layout::name_rect(row),
                 theme::TEXT,
+                theme::ACCENT,
+                &matched.match_indices,
             );
             let _ = draw::draw_text(
                 &renderer.target,

@@ -68,7 +68,7 @@ impl Renderer {
 
             let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
             let text_ui = TextFormat::new(&dwrite, 16.0)?;
-            let text_desc = TextFormat::new_right(&dwrite, 13.0)?;
+            let text_desc = TextFormat::new_right(&dwrite, 14.0)?;
             let scale = dpi_x / 96.0;
 
             Ok(Self {

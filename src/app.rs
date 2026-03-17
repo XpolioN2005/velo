@@ -13,6 +13,12 @@ pub enum InputMode {
     },
 }
 
+pub struct MatchedCommand {
+    pub cmd_ref: CommandRef,
+    pub match_indices: Vec<usize>,
+    pub score: i32,
+}
+
 pub struct AppState {
     pub query: String,
     pub arg_buffer: String,
@@ -20,7 +26,7 @@ pub struct AppState {
     pub focused: bool,
     pub selected: usize,
     pub user_commands: Vec<UserCommand>,
-    pub results: Vec<CommandRef>,
+    pub results: Vec<MatchedCommand>,
 }
 
 impl AppState {
@@ -65,7 +71,6 @@ impl AppState {
             }
             InputMode::ArgInput { .. } => {
                 if self.arg_buffer.is_empty() {
-                    // backspace on empty buffer — cancel back to query mode
                     self.mode = InputMode::Query;
                     self.arg_buffer.clear();
                 } else {
@@ -95,7 +100,6 @@ impl AppState {
         }
     }
 
-    // Current prompt label for palette rendering
     pub fn current_prompt(&self) -> Option<&str> {
         match &self.mode {
             InputMode::Query => None,
@@ -116,13 +120,11 @@ impl AppState {
                 if self.results.is_empty() {
                     return WindowAction::Nothing;
                 }
-                let cmd_ref = self.results[self.selected];
+                let cmd_ref = self.results[self.selected].cmd_ref;
                 let prompts = self.get_prompts(cmd_ref);
                 if prompts.is_empty() {
-                    // no prompts — execute immediately
                     self.execute_cmd(cmd_ref, vec![])
                 } else {
-                    // has prompts — enter arg input mode
                     self.mode = InputMode::ArgInput {
                         command: cmd_ref,
                         prompt_index: 0,
@@ -142,11 +144,10 @@ impl AppState {
                 self.mode = InputMode::Query;
                 self.arg_buffer.clear();
             }
-            InputMode::Query => {} // window.rs handles hiding
+            InputMode::Query => {}
         }
     }
 
-    // Returns true if escape should hide the window (only in Query mode)
     pub fn escape_should_hide(&self) -> bool {
         matches!(self.mode, InputMode::Query)
     }
@@ -171,7 +172,6 @@ impl AppState {
 
         let arg = self.arg_buffer.clone();
         self.arg_buffer.clear();
-
         let prompts_len = self.get_prompts(command).len();
 
         if let InputMode::ArgInput {
@@ -182,14 +182,12 @@ impl AppState {
         {
             collected_args.push(arg);
             *prompt_index += 1;
-
             if *prompt_index >= prompts_len {
                 let args = collected_args.clone();
                 self.mode = InputMode::Query;
                 return self.execute_cmd(command, args);
             }
         }
-
         WindowAction::Nothing
     }
 
@@ -223,21 +221,104 @@ impl AppState {
             return;
         }
         let q = self.query.to_lowercase();
+
         for (i, cmd) in BUILT_INS.iter().enumerate() {
-            if matches_query(cmd.name, cmd.aliases, &q) {
-                self.results.push(CommandRef::BuiltIn(i));
+            if let Some((score, indices)) = fuzzy_match(cmd.name, &q) {
+                self.results.push(MatchedCommand {
+                    cmd_ref: CommandRef::BuiltIn(i),
+                    match_indices: indices,
+                    score,
+                });
+            } else {
+                let alias_score = cmd
+                    .aliases
+                    .iter()
+                    .filter_map(|a| fuzzy_match(a, &q))
+                    .map(|(s, _)| s + 15)
+                    .max();
+                if let Some(score) = alias_score {
+                    self.results.push(MatchedCommand {
+                        cmd_ref: CommandRef::BuiltIn(i),
+                        match_indices: vec![],
+                        score,
+                    });
+                }
             }
         }
+
         for (i, cmd) in self.user_commands.iter().enumerate() {
-            let aliases: Vec<&str> = cmd.aliases.iter().map(|s| s.as_str()).collect();
-            if matches_query(&cmd.name, &aliases, &q) {
-                self.results.push(CommandRef::User(i));
+            if let Some((score, indices)) = fuzzy_match(&cmd.name, &q) {
+                self.results.push(MatchedCommand {
+                    cmd_ref: CommandRef::User(i),
+                    match_indices: indices,
+                    score,
+                });
+            } else {
+                let alias_score = cmd
+                    .aliases
+                    .iter()
+                    .filter_map(|a| fuzzy_match(a, &q))
+                    .map(|(s, _)| s + 15)
+                    .max();
+                if let Some(score) = alias_score {
+                    self.results.push(MatchedCommand {
+                        cmd_ref: CommandRef::User(i),
+                        match_indices: vec![],
+                        score,
+                    });
+                }
             }
         }
+
+        self.results.sort_by(|a, b| b.score.cmp(&a.score));
     }
 }
 
-// offset = starting index into collected_args for this action's prompts
+fn fuzzy_match(name: &str, query: &str) -> Option<(i32, Vec<usize>)> {
+    let name_lower = name.to_lowercase();
+    let name_chars: Vec<char> = name_lower.chars().collect();
+    let query_chars: Vec<char> = query.chars().collect();
+
+    let mut indices = Vec::new();
+    let mut score = 0i32;
+    let mut ni = 0;
+    let mut qi = 0;
+    let mut last_match = None::<usize>;
+    let mut consecutive = 0i32;
+
+    while qi < query_chars.len() && ni < name_chars.len() {
+        if name_chars[ni] == query_chars[qi] {
+            indices.push(ni);
+
+            if ni > 0 && last_match == Some(ni - 1) {
+                consecutive += 1;
+                score += 5 * consecutive;
+            } else {
+                consecutive = 0;
+            }
+
+            if ni == 0 {
+                score += 10;
+            }
+
+            if ni > 0 && (name_chars[ni - 1] == ' ' || name_chars[ni - 1] == '_') {
+                score += 8;
+            }
+
+            score += 1;
+            last_match = Some(ni);
+            qi += 1;
+        }
+        ni += 1;
+    }
+
+    if qi == query_chars.len() {
+        Some((score, indices))
+    } else {
+        None
+    }
+}
+
 fn run_builtin(action: &Action, args: &[String], offset: usize) -> WindowAction {
     match action {
         Action::Internal(InternalAction::Quit) => WindowAction::Quit,
@@ -309,8 +390,4 @@ fn open_url(url: &str) {
     let _ = std::process::Command::new("cmd")
         .args(["/c", "start", "", url])
         .spawn();
-}
-
-fn matches_query(name: &str, aliases: &[&str], q: &str) -> bool {
-    name.to_lowercase().contains(q) || aliases.iter().any(|a| a.to_lowercase().contains(q))
 }

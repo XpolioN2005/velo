@@ -6,4 +6,4 @@ edition = "2024"
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
-windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Direct2D", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse"] }
+windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_Graphics_Direct2D", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse","Foundation_Numerics",] }

@@ -1,4 +1,6 @@
-# Palette — Command Palette for Windows
+markdown
+
+# Velo — Command Palette for Windows
 
 > Living doc. Update as steps complete.
 
@@ -15,21 +17,19 @@
 
 ## Project Structure
 
-```
 src/
-├── main.rs     — entry point, DPI awareness, message loop
-├── window.rs   — Win32 messages only, no draw logic
-├── app.rs      — app state (query, focus, selected index, results)
-├── command.rs  — Command structs, actions, ExecuteResult
-├── config.rs   — TOML config loader (%APPDATA%\velo\commands.toml)
+├── main.rs — entry point, DPI awareness, message loop
+├── window.rs — Win32 messages only, no draw logic
+├── app.rs — app state, InputMode, execution logic
+├── command.rs — Command structs, unified Action enum, WindowAction
+├── config.rs — YAML config loader (%APPDATA%\velo\commands.yaml)
 └── renderer/
-    ├── mod.rs       — module declarations + re-exports only
-    ├── renderer.rs  — Renderer struct (D2D factory, render target, DWrite)
-    ├── draw.rs      — raw draw primitives (text, rect, outline, fill)
-    ├── layout.rs    — region math
-    ├── theme.rs     — all color constants
-    └── palette.rs   — full UI assembly, calls draw + theme
-```
+├── mod.rs — module declarations + re-exports only
+├── renderer.rs — Renderer struct (D2D factory, render target, DWrite)
+├── draw.rs — raw draw primitives (text, rect, outline, fill)
+├── layout.rs — region math
+├── theme.rs — all color constants
+└── palette.rs — full UI assembly, calls draw + theme
 
 ---
 
@@ -51,24 +51,24 @@ src/
 
 ## Message Loop Flow
 
-```
-WM_HOTKEY    → clear query, show window, steal focus (Ctrl+Alt+P)
-WM_PAINT     → palette::draw_palette() — full UI redraw
-WM_CHAR      → append char to query, resize, InvalidateRect
-WM_KEYDOWN   → backspace, escape, enter, arrow keys
-WM_SETFOCUS  → focused = true, InvalidateRect
+WM_HOTKEY → clear query, show window, steal focus (Ctrl+Alt+P)
+WM_PAINT → palette::draw_palette() — full UI redraw
+WM_CHAR → append char to query or arg buffer, resize, InvalidateRect
+WM_KEYDOWN → backspace, escape, enter, arrow keys — behavior branches on InputMode
+WM_SETFOCUS → focused = true, InvalidateRect
 WM_KILLFOCUS → focused = false, clear query, hide window
-WM_SIZE      → renderer.resize(w, h) — keeps D2D in sync with window
-WM_CLOSE     → clear query, hide window (process stays alive)
-WM_DESTROY   → only on explicit quit — PostQuitMessage
-```
+WM_SIZE → renderer.resize(w, h) — keeps D2D in sync with window
+WM_CLOSE → clear query, hide window (process stays alive)
+WM_DESTROY → only on explicit quit — PostQuitMessage
 
 ---
 
 ## Resource Targets
 
-- RAM idle: ~2–5 MB (release build, window hidden)
+- RAM idle: ~3 MB (release build, window hidden — renderer dropped)
+- RAM active: ~29 MB (renderer alive)
 - CPU hidden: 0% (sleeps on GetMessage, no polling)
+- Show delay: ~80ms (renderer recreate on hotkey)
 - Only wakes on: hotkey, keypress, paint
 
 ---
@@ -86,39 +86,94 @@ WM_DESTROY   → only on explicit quit — PostQuitMessage
 
 ### `BuiltInCommand` — zero heap, lives in binary
 
-```
-name:        &'static str
+name: &'static str
 description: &'static str
-aliases:     &'static [&'static str]
-category:    Category
-action:      BuiltInAction
-```
+aliases: &'static [&'static str]
+action: Action
 
-### `UserCommand` — heap, loaded from TOML at startup
+### `UserCommand` — heap, loaded from YAML at startup
 
-```
-name:        String
+name: String
 description: String
-aliases:     Vec<String>
-category:    Category
-action:      UserAction
-```
+aliases: Vec<String>
+action: UserAction
+
+### Unified `Action` enum — built-ins only
+
+Internal(InternalAction) — Quit | Hide | ReloadConfig
+LaunchProcess { program, args, prompts }
+OpenUrl { url, prompts }
+Compound(Vec<Action>)
+
+### `UserAction` enum — mirrors Action with owned strings
+
+LaunchProcess { program: String, args: Vec<String>, prompts: Vec<UserPrompt> }
+OpenUrl { url: String, prompts: Vec<UserPrompt> }
+Compound(Vec<UserAction>)
+
+### `Prompt` / `UserPrompt`
+
+label: &'static str / String — shown in query bar during ArgInput
+optional: bool — if false, empty submission rejected
+
+### Placeholder substitution
+
+`{0}`, `{1}` etc in args/url replaced at execution time with collected arg values.
 
 ### `CommandRef` — lightweight index, no cloning
 
-```
 BuiltIn(usize) | User(usize)
-```
 
-### `ExecuteResult`
+### `WindowAction` — only what window.rs needs
 
-```
-Quit | Hide | ReloadConfig | Nothing
-```
+Quit | Hide | Nothing
+
+### `InputMode`
+
+Query — normal search
+ArgInput { command, prompt_index, collected_args } — collecting runtime args
+
+`
 
 ### Config path
 
-`%APPDATA%\velo\commands.toml` — missing file is silent, not an error
+`%APPDATA%\velo\commands.yaml` — missing file is silent, not an error
+
+---
+
+## YAML Schema
+
+yaml
+commands:
+
+- name: Open Notepad
+  description: Launch Notepad
+  aliases: [notepad, np]
+  action:
+  type: launch
+  program: notepad.exe
+  args: []
+
+- name: Google
+  description: Search Google
+  aliases: [google, g]
+  action:
+  type: open_url
+  url: "https://google.com/search?q={0}"
+  prompts: - label: "Search:"
+  optional: false
+
+- name: Dev Setup
+  description: Open editor and terminal
+  aliases: [dev]
+  action:
+  type: compound
+  steps: - type: launch
+  program: code
+  args: ["."] - type: launch
+  program: wt.exe
+  args: []
+  `
 
 ---
 
@@ -132,7 +187,7 @@ Quit | Hide | ReloadConfig | Nothing
 - [x] Window created with correct style flags
 - [x] Message loop running
 - [x] `WM_CLOSE` hides instead of killing — process stays alive
-- [x] `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` — console in dev, silent in release
+- [x] `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
 
 ### Step 2 — Direct2D render target, clear color ✅
 
@@ -144,28 +199,42 @@ Quit | Hide | ReloadConfig | Nothing
 ### Step 3 — DirectWrite text, draw query string ✅
 
 - [x] Create DWrite factory
-- [x] Create TextFormat struct in draw.rs (Segoe UI)
-- [x] Draw "Search..." placeholder text on dark background
-- [x] renderer/draw.rs split out for all draw primitives
-- [x] renderer/renderer.rs owns Renderer struct
+- [x] TextFormat struct in draw.rs — left-aligned, vertically centered
+- [x] TextFormat::new_right — right-aligned for descriptions
+- [x] Draw "Search..." placeholder, query text, result rows
+- [x] ClearType antialiasing enabled
 
 ### Step 4 — Keyboard input ✅
 
-- [x] WM_CHAR → append char to query string (max 100 chars)
-- [x] WM_KEYDOWN → backspace, escape hides + clears, enter executes, arrow keys
-- [x] WM_SETFOCUS / WM_KILLFOCUS → toggle focus, hide on lose focus
+- [x] WM_CHAR → append char (max 100 chars), branches on InputMode
+- [x] WM_KEYDOWN → backspace, escape, enter, arrow keys
+- [x] WM_SETFOCUS / WM_KILLFOCUS → focus state, hide on lose focus
 - [x] Border drawn around query bar only, changes color on focus/unfocus
 
 ### Step 5 — Command list + result rows ✅
 
-- [x] `command.rs` — BuiltInCommand (&'static), UserCommand (heap), CommandRef, ExecuteResult
-- [x] `config.rs` — TOML loader via serde, %APPDATA%\velo\commands.toml
-- [x] `layout.rs` — query bar, row rects, name/desc split, window_height
-- [x] Result rows drawn in palette.rs — name + description two-line layout
+- [x] `command.rs` — unified Action enum, BuiltInCommand, UserCommand, Prompt
+- [x] `config.rs` — YAML loader via serde_yaml
+- [x] `layout.rs` — query bar, row rects, name/desc same-line split (60/40), window_height
+- [x] Result rows — name left, description right (dimmed), ellipsis trimming
 - [x] Dynamic window height via SetWindowPos + WM_SIZE → renderer.resize()
 - [x] Divider between built-in and user command sections
 - [x] Arrow keys move selected index, selection highlight drawn
-- [x] Enter executes selected command via execute_selected() → ExecuteResult
+- [x] Renderer dropped on hide (~3MB idle), recreated on show (~80ms)
+
+### Step 5.5 — Execution + ArgInput mode ✅
+
+- [x] All execution logic in app.rs — window.rs only sees WindowAction
+- [x] LaunchProcess — spawns detached process, hides
+- [x] OpenUrl — cmd /c start, hides
+- [x] Compound — fires all steps, hides
+- [x] InternalAction::Quit — PostQuitMessage
+- [x] InternalAction::ReloadConfig — stubbed
+- [x] InputMode::ArgInput — prompt label shown in query bar, arg buffer collected
+- [x] Placeholder substitution {0}, {1} at execution time
+- [x] Backspace on empty arg buffer cancels back to Query mode
+- [x] Escape in ArgInput cancels to Query mode, Escape in Query hides window
+- [x] Window collapses to query bar height during ArgInput mode
 
 ### Step 6 — Fuzzy search wired up
 
@@ -178,7 +247,6 @@ Quit | Hide | ReloadConfig | Nothing
 - [x] WM_HOTKEY → clear query, show, SetForegroundWindow, SetFocus
 - [x] WM_KILLFOCUS → hide + clear query
 - [x] DPI awareness — SetProcessDpiAwarenessContext at startup
-- [x] ClearType text antialiasing
 - [x] GetDesktopDpi → render target DPI, physical pixel size on init and resize
 
 ### Step 7.5 — System tray icon
@@ -194,15 +262,28 @@ Quit | Hide | ReloadConfig | Nothing
 
 ---
 
+## Built-in Commands
+
+| Name            | Aliases                  | Action                                    |
+| --------------- | ------------------------ | ----------------------------------------- |
+| Quit Velo       | exit, close              | Internal::Quit                            |
+| Reload Config   | refresh                  | Internal::ReloadConfig (stubbed)          |
+| Open PowerShell | powershell, ps, terminal | LaunchProcess powershell.exe              |
+| Ping            | ping                     | LaunchProcess powershell -NoExit ping {0} |
+
+---
+
 ## Notes & Gotchas
 
 - Direct2D render target must be **cached** on Renderer — never recreate per WM_PAINT or COM objects leak
+- Renderer is `Option<Renderer>` on WindowState — dropped on hide, recreated on show
 - `WM_SIZE` must call `renderer.resize()` — without it D2D stretches content after SetWindowPos
-- `pixelSize` in render target init must be physical pixels (logical × scale) — not logical pixels
-- `resize()` receives logical pixels from WM_SIZE lparam — must multiply by scale before passing to D2D
-- Fuzzy search must stay **synchronous and fast** for small lists; revisit if plugin count grows large
+- `pixelSize` in render target init must be physical pixels (logical × scale)
+- `resize()` receives logical pixels from WM_SIZE lparam — multiply by scale before passing to D2D
 - `WM_KILLFOCUS` fires on own child windows too — handle carefully in Step 7.5+
 - Edition 2024: `unsafe extern fn` bodies need explicit `unsafe {}` inside
 - `WM_CLOSE` must hide, not destroy — `WM_DESTROY` is only for explicit quit via tray menu
-- `Box::leak` used for LaunchProcess strings from config — small, lives for program lifetime, avoids lifetime params
 - `results: Vec<CommandRef>` — indices not clones, rebuilt on every keystroke synchronously
+- `substitute()` in command.rs handles {0}, {1} placeholder replacement at execution time
+- Compound steps all fire in parallel (fire-and-forget) — sequential mode deferred to later
+- Config silently returns empty vec on missing or malformed file — no crash on first run

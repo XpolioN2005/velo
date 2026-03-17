@@ -6,14 +6,22 @@ use windows::{
         },
         DirectWrite::{
             DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_REGULAR,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
-            DWRITE_TEXT_ALIGNMENT_TRAILING, IDWriteFactory, IDWriteTextFormat,
+            DWRITE_HIT_TEST_METRICS, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+            DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TRIMMING,
+            DWRITE_TRIMMING_GRANULARITY_CHARACTER, IDWriteFactory, IDWriteTextFormat,
+            IDWriteTextLayout,
         },
     },
     core::*,
 };
 
-/// A text format — font, size, alignment. Create once, reuse every frame.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Point2F {
+    x: f32,
+    y: f32,
+}
+
 pub struct TextFormat {
     pub format: IDWriteTextFormat,
 }
@@ -30,24 +38,19 @@ impl TextFormat {
                 size,
                 w!("en-us"),
             )?;
-
-            // Text left-aligned, vertically centered
             format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
             format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
-
-            // Create ellipsis trimming sign
             let trimming_sign = dwrite.CreateEllipsisTrimmingSign(&format)?;
-            let trimming = windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING {
-                granularity:
-                    windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+            let trimming = DWRITE_TRIMMING {
+                granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
                 delimiter: 0,
                 delimiterCount: 0,
             };
             format.SetTrimming(&trimming, &trimming_sign)?;
-
             Ok(Self { format })
         }
     }
+
     pub fn new_right(dwrite: &IDWriteFactory, size: f32) -> Result<Self> {
         unsafe {
             let format = dwrite.CreateTextFormat(
@@ -61,22 +64,18 @@ impl TextFormat {
             )?;
             format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
             format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
-
             let trimming_sign = dwrite.CreateEllipsisTrimmingSign(&format)?;
-            let trimming = windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING {
-                granularity:
-                    windows::Win32::Graphics::DirectWrite::DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+            let trimming = DWRITE_TRIMMING {
+                granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
                 delimiter: 0,
                 delimiterCount: 0,
             };
             format.SetTrimming(&trimming, &trimming_sign)?;
-
             Ok(Self { format })
         }
     }
 }
 
-/// Draw a string into a rect using the given format and color.
 pub fn draw_text(
     target: &ID2D1HwndRenderTarget,
     text: &str,
@@ -85,12 +84,8 @@ pub fn draw_text(
     color: D2D1_COLOR_F,
 ) -> Result<()> {
     unsafe {
-        // Create a solid color brush — cheap, done per draw call for now
         let brush: ID2D1SolidColorBrush = target.CreateSolidColorBrush(&color, None)?;
-
-        // Convert &str to UTF-16 for Win32
         let wide: Vec<u16> = text.encode_utf16().collect();
-
         target.DrawText(
             &wide,
             &fmt.format,
@@ -99,9 +94,115 @@ pub fn draw_text(
             Default::default(),
             Default::default(),
         );
+        Ok(())
+    }
+}
+
+pub fn draw_text_highlighted(
+    target: &ID2D1HwndRenderTarget,
+    dwrite: &IDWriteFactory,
+    text: &str,
+    fmt: &TextFormat,
+    rect: D2D_RECT_F,
+    text_color: D2D1_COLOR_F,
+    highlight_color: D2D1_COLOR_F,
+    match_indices: &[usize],
+) -> Result<()> {
+    unsafe {
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let rect_w = rect.right - rect.left;
+        let rect_h = rect.bottom - rect.top;
+
+        let layout: IDWriteTextLayout =
+            dwrite.CreateTextLayout(&wide, &fmt.format, rect_w, rect_h)?;
+
+        let text_brush: ID2D1SolidColorBrush = target.CreateSolidColorBrush(&text_color, None)?;
+        target.DrawTextLayout(
+            std::mem::transmute(Point2F {
+                x: rect.left,
+                y: rect.top,
+            }),
+            &layout,
+            &text_brush,
+            Default::default(),
+        );
+
+        if match_indices.is_empty() {
+            return Ok(());
+        }
+
+        let ranges = consecutive_ranges(match_indices);
+        let highlight_brush: ID2D1SolidColorBrush =
+            target.CreateSolidColorBrush(&highlight_color, None)?;
+
+        for (start, len) in ranges {
+            let mut actual_count = 0u32;
+            let _ = layout.HitTestTextRange(
+                start as u32,
+                len as u32,
+                rect.left,
+                rect.top,
+                None,
+                &mut actual_count,
+            );
+
+            if actual_count == 0 {
+                continue;
+            }
+
+            let mut hit_metrics = vec![DWRITE_HIT_TEST_METRICS::default(); actual_count as usize];
+            let _ = layout.HitTestTextRange(
+                start as u32,
+                len as u32,
+                rect.left,
+                rect.top,
+                Some(hit_metrics.as_mut_slice()),
+                &mut actual_count,
+            );
+
+            for m in &hit_metrics[..actual_count as usize] {
+                let char_rect = D2D_RECT_F {
+                    left: m.left,
+                    top: rect.top,
+                    right: m.left + m.width,
+                    bottom: rect.bottom,
+                };
+                target.PushAxisAlignedClip(&char_rect, Default::default());
+                target.DrawTextLayout(
+                    std::mem::transmute(Point2F {
+                        x: rect.left,
+                        y: rect.top,
+                    }),
+                    &layout,
+                    &highlight_brush,
+                    Default::default(),
+                );
+                target.PopAxisAlignedClip();
+            }
+        }
 
         Ok(())
     }
+}
+
+fn consecutive_ranges(indices: &[usize]) -> Vec<(usize, usize)> {
+    if indices.is_empty() {
+        return vec![];
+    }
+    let mut ranges = Vec::new();
+    let mut start = indices[0];
+    let mut len = 1;
+    for &idx in &indices[1..] {
+        if idx == start + len {
+            len += 1;
+        } else {
+            ranges.push((start, len));
+            start = idx;
+            len = 1;
+        }
+    }
+    ranges.push((start, len));
+    ranges
 }
 
 pub fn draw_rect_outline(
