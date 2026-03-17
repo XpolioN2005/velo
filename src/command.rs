@@ -141,4 +141,22 @@ pub static BUILT_INS: &[BuiltInCommand] = &[
             }],
         },
     },
+    BuiltInCommand {
+        name: "Google Search",
+        description: "Search Google with optional site filter",
+        aliases: &["google", "g"],
+        action: Action::OpenUrl {
+            url: "https://www.google.com/search?q={0}+site:{1}",
+            prompts: &[
+                Prompt {
+                    label: "Search query:",
+                    optional: false,
+                },
+                Prompt {
+                    label: "Site (optional):",
+                    optional: true,
+                },
+            ],
+        },
+    },
 ];

@@ -152,7 +152,7 @@ impl AppState {
     }
 
     fn advance_arg(&mut self) -> WindowAction {
-        let (command, prompt_index, optional) = match &self.mode {
+        let (command, optional) = match &self.mode {
             InputMode::ArgInput {
                 command,
                 prompt_index,
@@ -160,13 +160,13 @@ impl AppState {
             } => {
                 let prompts = self.get_prompts(*command);
                 let optional = prompts.get(*prompt_index).map(|p| p.1).unwrap_or(true);
-                (*command, *prompt_index, optional)
+                (*command, optional)
             }
             _ => return WindowAction::Nothing,
         };
 
         if self.arg_buffer.is_empty() && !optional {
-            return WindowAction::Nothing; // reject empty non-optional
+            return WindowAction::Nothing;
         }
 
         let arg = self.arg_buffer.clone();
@@ -184,7 +184,6 @@ impl AppState {
             *prompt_index += 1;
 
             if *prompt_index >= prompts_len {
-                // all prompts filled — execute
                 let args = collected_args.clone();
                 self.mode = InputMode::Query;
                 return self.execute_cmd(command, args);
