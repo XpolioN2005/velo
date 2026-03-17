@@ -1,6 +1,6 @@
 use windows::{Win32::Foundation::RECT, Win32::UI::WindowsAndMessaging::GetClientRect};
 
-use crate::app::AppState;
+use crate::app::{AppState, InputMode};
 use crate::command::CommandRef;
 use crate::renderer::{Renderer, draw, layout, theme};
 
@@ -22,25 +22,51 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
             draw::draw_rect_outline(&renderer.target, layout::border_rect(w), border_color, 1.5);
 
         let text_rect = layout::query_bar_rect(w);
-        if app.query.is_empty() {
-            let _ = draw::draw_text(
-                &renderer.target,
-                "Search...",
-                &renderer.text_ui,
-                text_rect,
-                theme::TEXT_DIM,
-            );
-        } else {
-            let _ = draw::draw_text(
-                &renderer.target,
-                &app.query,
-                &renderer.text_ui,
-                text_rect,
-                theme::TEXT,
-            );
+
+        match &app.mode {
+            InputMode::Query => {
+                if app.query.is_empty() {
+                    let _ = draw::draw_text(
+                        &renderer.target,
+                        "Search...",
+                        &renderer.text_ui,
+                        text_rect,
+                        theme::TEXT_DIM,
+                    );
+                } else {
+                    let _ = draw::draw_text(
+                        &renderer.target,
+                        &app.query,
+                        &renderer.text_ui,
+                        text_rect,
+                        theme::TEXT,
+                    );
+                }
+            }
+            InputMode::ArgInput { .. } => {
+                let prompt = app.current_prompt().unwrap_or("Enter value:");
+                if app.arg_buffer.is_empty() {
+                    let _ = draw::draw_text(
+                        &renderer.target,
+                        prompt,
+                        &renderer.text_ui,
+                        text_rect,
+                        theme::TEXT_DIM,
+                    );
+                } else {
+                    let _ = draw::draw_text(
+                        &renderer.target,
+                        &app.arg_buffer,
+                        &renderer.text_ui,
+                        text_rect,
+                        theme::TEXT,
+                    );
+                }
+            }
         }
 
-        if app.results.is_empty() {
+        // hide results in ArgInput mode
+        if app.results.is_empty() || matches!(app.mode, InputMode::ArgInput { .. }) {
             renderer.end().unwrap();
             return;
         }

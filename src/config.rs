@@ -1,18 +1,11 @@
-use crate::command::{Category, UserAction, UserCommand};
+use crate::command::{UserAction, UserCommand, UserPrompt};
 use std::path::PathBuf;
 
-// %APPDATA%\velo\commands.toml
 fn config_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("velo").join("commands.toml"))
+    std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("velo").join("commands.yaml"))
 }
 
-// TOML shape:
-// [[commands]]
-// name = "Open Docs"
-// description = "Opens the Velo docs"
-// aliases = ["docs"]
-// action = { type = "OpenUrl", url = "https://..." }
-mod toml_types {
+mod yaml_types {
     use serde::Deserialize;
 
     #[derive(Deserialize)]
@@ -31,10 +24,57 @@ mod toml_types {
     }
 
     #[derive(Deserialize)]
-    #[serde(tag = "type")]
+    pub struct RawPrompt {
+        pub label: String,
+        #[serde(default)]
+        pub optional: bool,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
     pub enum RawAction {
-        LaunchProcess { cmd: String },
-        OpenUrl { url: String },
+        Launch {
+            program: String,
+            args: Vec<String>,
+            #[serde(default)]
+            prompts: Vec<RawPrompt>,
+        },
+        OpenUrl {
+            url: String,
+            #[serde(default)]
+            prompts: Vec<RawPrompt>,
+        },
+        Compound {
+            steps: Vec<RawAction>,
+        },
+    }
+}
+
+fn raw_prompt(p: yaml_types::RawPrompt) -> UserPrompt {
+    UserPrompt {
+        label: p.label,
+        optional: p.optional,
+    }
+}
+
+fn raw_to_user_action(raw: yaml_types::RawAction) -> UserAction {
+    match raw {
+        yaml_types::RawAction::Launch {
+            program,
+            args,
+            prompts,
+        } => UserAction::LaunchProcess {
+            program,
+            args,
+            prompts: prompts.into_iter().map(raw_prompt).collect(),
+        },
+        yaml_types::RawAction::OpenUrl { url, prompts } => UserAction::OpenUrl {
+            url,
+            prompts: prompts.into_iter().map(raw_prompt).collect(),
+        },
+        yaml_types::RawAction::Compound { steps } => {
+            UserAction::Compound(steps.into_iter().map(raw_to_user_action).collect())
+        }
     }
 }
 
@@ -43,35 +83,22 @@ pub fn load_user_commands() -> Vec<UserCommand> {
         Some(p) => p,
         None => return vec![],
     };
-
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(_) => return vec![], // missing file is fine
+        Err(_) => return vec![],
     };
-
-    let parsed: toml_types::ConfigFile = match toml::from_str(&text) {
+    let parsed: yaml_types::ConfigFile = match serde_yaml::from_str(&text) {
         Ok(p) => p,
-        Err(_) => return vec![], // malformed config — silent fail for now
+        Err(_) => return vec![],
     };
-
     parsed
         .commands
         .into_iter()
-        .map(|raw| {
-            let action = match raw.action {
-                toml_types::RawAction::LaunchProcess { cmd } => {
-                    // leak is acceptable — small, lives for program lifetime
-                    UserAction::LaunchProcess(Box::leak(cmd.into_boxed_str()))
-                }
-                toml_types::RawAction::OpenUrl { url } => UserAction::OpenUrl(url),
-            };
-            UserCommand {
-                name: raw.name,
-                description: raw.description,
-                aliases: raw.aliases,
-                category: Category::General,
-                action,
-            }
+        .map(|raw| UserCommand {
+            name: raw.name,
+            description: raw.description,
+            aliases: raw.aliases,
+            action: raw_to_user_action(raw.action),
         })
         .collect()
 }

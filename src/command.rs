@@ -1,49 +1,108 @@
-#[derive(Clone, Copy)]
-pub enum Category {
-    General,
-    Shell,
-    Settings,
-    Navigation,
-}
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum InternalAction {
     Quit,
+    Hide,
     ReloadConfig,
 }
 
-#[derive(Clone, Copy)]
-pub enum BuiltInAction {
+// Per-prompt definition — label shown in query bar, optional flag
+#[derive(Clone)]
+pub struct Prompt {
+    pub label: &'static str,
+    pub optional: bool,
+}
+
+#[derive(Clone)]
+pub enum Action {
     Internal(InternalAction),
-    LaunchProcess(&'static str),
+    LaunchProcess {
+        program: &'static str,
+        args: &'static [&'static str],
+        prompts: &'static [Prompt],
+    },
+    OpenUrl {
+        url: &'static str,
+        prompts: &'static [Prompt],
+    },
+    Compound(Vec<Action>),
+}
+
+impl Action {
+    // Collect all prompts across an action — compound flattens in order
+    pub fn all_prompts(&self) -> Vec<&Prompt> {
+        match self {
+            Action::LaunchProcess { prompts, .. } => prompts.iter().collect(),
+            Action::OpenUrl { prompts, .. } => prompts.iter().collect(),
+            Action::Compound(steps) => steps.iter().flat_map(|s| s.all_prompts()).collect(),
+            Action::Internal(_) => vec![],
+        }
+    }
 }
 
 pub struct BuiltInCommand {
     pub name: &'static str,
     pub description: &'static str,
     pub aliases: &'static [&'static str],
-    pub category: Category,
-    pub action: BuiltInAction,
-}
-
-pub enum UserAction {
-    LaunchProcess(&'static str),
-    OpenUrl(String),
+    pub action: Action,
 }
 
 pub struct UserCommand {
     pub name: String,
     pub description: String,
     pub aliases: Vec<String>,
-    pub category: Category,
     pub action: UserAction,
 }
 
-// Lightweight reference into one of the two command lists
+#[derive(Clone)]
+pub struct UserPrompt {
+    pub label: String,
+    pub optional: bool,
+}
+
+#[derive(Clone)]
+pub enum UserAction {
+    LaunchProcess {
+        program: String,
+        args: Vec<String>,
+        prompts: Vec<UserPrompt>,
+    },
+    OpenUrl {
+        url: String,
+        prompts: Vec<UserPrompt>,
+    },
+    Compound(Vec<UserAction>),
+}
+
+impl UserAction {
+    pub fn all_prompts(&self) -> Vec<&UserPrompt> {
+        match self {
+            UserAction::LaunchProcess { prompts, .. } => prompts.iter().collect(),
+            UserAction::OpenUrl { prompts, .. } => prompts.iter().collect(),
+            UserAction::Compound(steps) => steps.iter().flat_map(|s| s.all_prompts()).collect(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum CommandRef {
     BuiltIn(usize),
     User(usize),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum WindowAction {
+    Quit,
+    Hide,
+    Nothing,
+}
+
+// Substitute {0}, {1} etc in a string with collected args
+pub fn substitute(template: &str, args: &[String]) -> String {
+    let mut result = template.to_string();
+    for (i, arg) in args.iter().enumerate() {
+        result = result.replace(&format!("{{{}}}", i), arg);
+    }
+    result
 }
 
 pub static BUILT_INS: &[BuiltInCommand] = &[
@@ -51,39 +110,35 @@ pub static BUILT_INS: &[BuiltInCommand] = &[
         name: "Quit Velo",
         description: "Exit the application",
         aliases: &["exit", "close"],
-        category: Category::General,
-        action: BuiltInAction::Internal(InternalAction::Quit),
+        action: Action::Internal(InternalAction::Quit),
     },
     BuiltInCommand {
         name: "Reload Config",
-        description: "Reload commands.toml without restarting",
+        description: "Reload commands.yaml without restarting",
         aliases: &["refresh"],
-        category: Category::General,
-        action: BuiltInAction::Internal(InternalAction::ReloadConfig),
-    },
-    BuiltInCommand {
-        name: "Hello Velo",
-        description: "Test command — confirms display is working",
-        aliases: &["test", "hello"],
-        category: Category::General,
-        action: BuiltInAction::Internal(InternalAction::Quit), // placeholder action
+        action: Action::Internal(InternalAction::ReloadConfig),
     },
     BuiltInCommand {
         name: "Open PowerShell",
         description: "Launch PowerShell terminal",
         aliases: &["powershell", "ps", "terminal"],
-        category: Category::General,
-        action: BuiltInAction::LaunchProcess("powershell.exe"),
+        action: Action::LaunchProcess {
+            program: "powershell.exe",
+            args: &[],
+            prompts: &[],
+        },
+    },
+    BuiltInCommand {
+        name: "Ping",
+        description: "Ping a host",
+        aliases: &["ping"],
+        action: Action::LaunchProcess {
+            program: "powershell.exe",
+            args: &["-NoExit", "-Command", "ping {0}"],
+            prompts: &[Prompt {
+                label: "Host:",
+                optional: false,
+            }],
+        },
     },
 ];
-
-// What window.rs should do after a command runs
-#[derive(Clone)]
-pub enum ExecuteResult {
-    Quit,
-    Hide,
-    ReloadConfig,
-    Launch(String),
-    OpenUrl(String),
-    Nothing,
-}

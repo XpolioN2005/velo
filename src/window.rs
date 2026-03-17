@@ -19,8 +19,9 @@ use windows::{
     core::*,
 };
 
+use crate::app::{AppState, InputMode};
+use crate::command::WindowAction;
 use crate::renderer::{Renderer, layout, palette};
-use crate::{app::AppState, command::ExecuteResult};
 
 const WIN_WIDTH_RATIO: f32 = 0.40;
 const WIN_TOP_RATIO: f32 = 0.08;
@@ -34,7 +35,7 @@ const VK_DOWN: u32 = 0x28;
 const HOTKEY_ID: i32 = 1;
 
 struct WindowState {
-    renderer: Option<Renderer>, // None when hidden
+    renderer: Option<Renderer>,
     app: AppState,
     win_w: i32,
 }
@@ -44,14 +45,13 @@ unsafe fn hide(hwnd: HWND, ptr: *mut WindowState) {
         (*ptr).app.clear_query();
         let h = layout::window_height(0);
         let _ = SetWindowPos(hwnd, None, 0, 0, (*ptr).win_w, h, SWP_NOMOVE | SWP_NOZORDER);
-        (*ptr).renderer = None; // drop D2D resources
+        (*ptr).renderer = None;
         let _ = ShowWindow(hwnd, SW_HIDE);
     }
 }
 
 unsafe fn show(hwnd: HWND, ptr: *mut WindowState) {
     unsafe {
-        // Recreate renderer if dropped
         if (*ptr).renderer.is_none() {
             (*ptr).renderer = Renderer::new(hwnd).ok();
         }
@@ -64,7 +64,12 @@ unsafe fn show(hwnd: HWND, ptr: *mut WindowState) {
 
 unsafe fn resize_to_results(hwnd: HWND, state: &WindowState) {
     unsafe {
-        let h = layout::window_height(state.app.results.len());
+        // In ArgInput mode collapse to query bar only
+        let count = match &state.app.mode {
+            InputMode::ArgInput { .. } => 0,
+            InputMode::Query => state.app.results.len(),
+        };
+        let h = layout::window_height(count);
         let _ = SetWindowPos(hwnd, None, 0, 0, state.win_w, h, SWP_NOMOVE | SWP_NOZORDER);
     }
 }
@@ -189,7 +194,13 @@ unsafe extern "system" fn wnd_proc(
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_ESCAPE => {
-                            hide(hwnd, ptr);
+                            if (*ptr).app.escape_should_hide() {
+                                hide(hwnd, ptr);
+                            } else {
+                                (*ptr).app.escape();
+                                resize_to_results(hwnd, &*ptr);
+                                let _ = InvalidateRect(Some(hwnd), None, false);
+                            }
                         }
                         VK_UP => {
                             (*ptr).app.select_prev();
@@ -199,23 +210,18 @@ unsafe extern "system" fn wnd_proc(
                             (*ptr).app.select_next();
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
-                        VK_RETURN => {
-                            match (*ptr).app.execute_selected() {
-                                ExecuteResult::Quit => {
-                                    PostQuitMessage(0);
-                                }
-                                ExecuteResult::Hide => {
-                                    hide(hwnd, ptr);
-                                }
-                                ExecuteResult::ReloadConfig => { /* Step 8 */ }
-                                ExecuteResult::Launch(cmd) => {
-                                    let _ = std::process::Command::new(&cmd).spawn();
-                                    hide(hwnd, ptr);
-                                }
-                                ExecuteResult::OpenUrl(_) => { /* next */ }
-                                ExecuteResult::Nothing => {}
+                        VK_RETURN => match (*ptr).app.enter() {
+                            WindowAction::Quit => {
+                                PostQuitMessage(0);
                             }
-                        }
+                            WindowAction::Hide => {
+                                hide(hwnd, ptr);
+                            }
+                            WindowAction::Nothing => {
+                                resize_to_results(hwnd, &*ptr);
+                                let _ = InvalidateRect(Some(hwnd), None, false);
+                            }
+                        },
                         _ => {}
                     }
                 }
