@@ -1,6 +1,6 @@
 use windows::{Win32::Foundation::RECT, Win32::UI::WindowsAndMessaging::GetClientRect};
 
-use crate::app::{AppState, InputMode, MatchedCommand};
+use crate::app::{AppState, InputMode};
 use crate::command::CommandRef;
 use crate::renderer::{Renderer, draw, layout, theme};
 
@@ -13,6 +13,28 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
         let _ = GetClientRect(hwnd, &mut rc);
         let w = rc.right as f32;
 
+        // title bar
+        let _ = draw::draw_rect_filled(
+            &renderer.target,
+            layout::title_bar_rect(w),
+            theme::TITLE_BAR_BG,
+        );
+        let title_rect = layout::title_bar_rect(w);
+        let title_text_rect = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F {
+            left: title_rect.left + layout::PADDING_H,
+            top: title_rect.top,
+            right: title_rect.right,
+            bottom: title_rect.bottom,
+        };
+        let _ = draw::draw_text(
+            &renderer.target,
+            "velo",
+            &renderer.text_ui,
+            title_text_rect,
+            theme::TITLE_TEXT,
+        );
+
+        // outer border
         let border_color = if app.focused {
             theme::BORDER_FOCUS
         } else {
@@ -21,6 +43,7 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
         let _ =
             draw::draw_rect_outline(&renderer.target, layout::border_rect(w), border_color, 1.5);
 
+        // query bar
         let text_rect = layout::query_bar_rect(w);
 
         match &app.mode {

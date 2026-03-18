@@ -6,6 +6,18 @@ pub const BG: D2D1_COLOR_F = D2D1_COLOR_F {
     b: 0.11,
     a: 1.0,
 };
+pub const TITLE_BAR_BG: D2D1_COLOR_F = D2D1_COLOR_F {
+    r: 0.13,
+    g: 0.13,
+    b: 0.15,
+    a: 1.0,
+};
+pub const TITLE_TEXT: D2D1_COLOR_F = D2D1_COLOR_F {
+    r: 0.60,
+    g: 0.60,
+    b: 0.60,
+    a: 1.0,
+};
 pub const TEXT: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 0.92,
     g: 0.92,
@@ -42,7 +54,6 @@ pub const HIGHLIGHT_BG: D2D1_COLOR_F = D2D1_COLOR_F {
     b: 0.24,
     a: 1.0,
 };
-
 pub const DIVIDER: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 0.20,
     g: 0.20,

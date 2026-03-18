@@ -7,12 +7,13 @@ use windows::{
             Input::KeyboardAndMouse::{MOD_ALT, MOD_CONTROL, RegisterHotKey, SetFocus, VK_P},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
-                GetSystemMetrics, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
-                RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOMOVE,
-                SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-                TranslateMessage, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN,
-                WM_KILLFOCUS, WM_PAINT, WM_SETFOCUS, WM_SIZE, WNDCLASSEXW, WS_EX_TOOLWINDOW,
-                WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+                GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCAPTION, IDC_ARROW,
+                LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN,
+                SW_HIDE, SW_SHOW, SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW,
+                SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR, WM_CLOSE, WM_DESTROY,
+                WM_EXITSIZEMOVE, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_NCHITTEST, WM_PAINT,
+                WM_SETFOCUS, WM_SIZE, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                WS_VISIBLE,
             },
         },
     },
@@ -64,7 +65,6 @@ unsafe fn show(hwnd: HWND, ptr: *mut WindowState) {
 
 unsafe fn resize_to_results(hwnd: HWND, state: &WindowState) {
     unsafe {
-        // In ArgInput mode collapse to query bar only
         let count = match &state.app.mode {
             InputMode::ArgInput { .. } => 0,
             InputMode::Query => state.app.results.len(),
@@ -94,8 +94,13 @@ pub fn create_and_run() {
 
         let win_w = (screen_w as f32 * WIN_WIDTH_RATIO) as i32;
         let win_h = layout::window_height(0);
-        let win_x = (screen_w - win_w) / 2;
-        let win_y = (screen_h as f32 * WIN_TOP_RATIO) as i32;
+
+        let app = AppState::new();
+        let win_x = app.config.window_x.unwrap_or((screen_w - win_w) / 2);
+        let win_y = app
+            .config
+            .window_y
+            .unwrap_or((screen_h as f32 * WIN_TOP_RATIO) as i32);
 
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -115,7 +120,7 @@ pub fn create_and_run() {
 
         let state = Box::new(WindowState {
             renderer: Renderer::new(hwnd).ok(),
-            app: AppState::new(),
+            app, // move in — already constructed
             win_w,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
@@ -141,6 +146,38 @@ unsafe extern "system" fn wnd_proc(
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
 
         match msg {
+            WM_NCHITTEST => {
+                let base = DefWindowProcW(hwnd, msg, wparam, lparam);
+                if !ptr.is_null() {
+                    // lparam is screen coords — convert GET_Y_LPARAM to client y
+                    let screen_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+                    let pt = POINT { x: 0, y: screen_y };
+                    // get window top in screen coords from GetWindowRect
+                    let mut wr = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut wr);
+                    let client_y = screen_y - wr.top;
+                    let scale = if !ptr.is_null() {
+                        (*ptr).renderer.as_ref().map(|r| r.scale).unwrap_or(1.0)
+                    } else {
+                        1.0
+                    };
+                    let title_bar_h = (layout::TITLE_BAR_H * scale) as i32;
+                    if client_y >= 0 && client_y < title_bar_h {
+                        return LRESULT(HTCAPTION as isize);
+                    }
+                    // suppress unused warning
+                    let _ = pt;
+                }
+                base
+            }
+            WM_EXITSIZEMOVE => {
+                if !ptr.is_null() {
+                    let mut wr = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut wr);
+                    (*ptr).app.save_position(wr.left, wr.top);
+                }
+                LRESULT(0)
+            }
             WM_HOTKEY => {
                 if wparam.0 as i32 == HOTKEY_ID && !ptr.is_null() {
                     show(hwnd, ptr);

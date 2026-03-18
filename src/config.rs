@@ -1,9 +1,82 @@
 use crate::command::{UserAction, UserCommand, UserPrompt};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-fn config_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("velo").join("commands.yaml"))
+// ── paths ────────────────────────────────────────────────────────────────────
+
+fn velo_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("velo"))
 }
+
+fn commands_path() -> Option<PathBuf> {
+    velo_dir().map(|d| d.join("commands.yaml"))
+}
+
+fn config_path() -> Option<PathBuf> {
+    velo_dir().map(|d| d.join("config.yaml"))
+}
+
+// ── AppConfig ─────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct AppConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_x: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_y: Option<i32>,
+}
+
+pub fn load_config() -> AppConfig {
+    let path = match config_path() {
+        Some(p) => p,
+        None => return AppConfig::default(),
+    };
+
+    if !path.exists() {
+        ensure_default_config(&path);
+        return AppConfig::default();
+    }
+
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return AppConfig::default(),
+    };
+
+    serde_yaml::from_str(&text).unwrap_or_default()
+}
+
+pub fn save_config(cfg: &AppConfig) {
+    let path = match config_path() {
+        Some(p) => p,
+        None => return,
+    };
+
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+
+    if let Ok(text) = serde_yaml::to_string(cfg) {
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+fn ensure_default_config(path: &PathBuf) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+
+    let default = "\
+# velo configuration\n\
+\n\
+# window position — set automatically on drag, or override manually\n\
+# window_x: 960\n\
+# window_y: 400\n\
+";
+
+    let _ = std::fs::write(path, default);
+}
+
+// ── commands.yaml (unchanged) ─────────────────────────────────────────────────
 
 mod yaml_types {
     use serde::Deserialize;
@@ -79,7 +152,7 @@ fn raw_to_user_action(raw: yaml_types::RawAction) -> UserAction {
 }
 
 pub fn load_user_commands() -> Vec<UserCommand> {
-    let path = match config_path() {
+    let path = match commands_path() {
         Some(p) => p,
         None => return vec![],
     };
