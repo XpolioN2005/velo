@@ -66,3 +66,9 @@ pub const TEXT_DESC: D2D1_COLOR_F = D2D1_COLOR_F {
     b: 0.50,
     a: 1.0,
 };
+pub const SELECTION_BG: D2D1_COLOR_F = D2D1_COLOR_F {
+    r: 0.38,
+    g: 0.52,
+    b: 0.97,
+    a: 0.35,
+};

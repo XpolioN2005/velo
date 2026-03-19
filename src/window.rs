@@ -2,9 +2,18 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, UpdateWindow},
-        System::LibraryLoader::GetModuleHandleW,
+        System::{
+            DataExchange::{
+                CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+            },
+            LibraryLoader::GetModuleHandleW,
+            Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
+            Ole::CF_UNICODETEXT,
+        },
         UI::{
-            Input::KeyboardAndMouse::{MOD_ALT, MOD_CONTROL, RegisterHotKey, SetFocus, VK_P},
+            Input::KeyboardAndMouse::{
+                GetKeyState, MOD_ALT, MOD_CONTROL, RegisterHotKey, SetFocus, VK_CONTROL, VK_P,
+            },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
                 GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCAPTION, IDC_ARROW,
@@ -32,6 +41,12 @@ const VK_ESCAPE: u32 = 0x1B;
 const VK_RETURN: u32 = 0x0D;
 const VK_UP: u32 = 0x26;
 const VK_DOWN: u32 = 0x28;
+const VK_LEFT: u32 = 0x25;
+const VK_RIGHT: u32 = 0x27;
+const VK_A: u32 = 0x41;
+const VK_C: u32 = 0x43;
+const VK_V: u32 = 0x56;
+const VK_X: u32 = 0x58;
 
 const HOTKEY_ID: i32 = 1;
 
@@ -73,6 +88,70 @@ unsafe fn resize_to_results(hwnd: HWND, state: &WindowState) {
         let _ = SetWindowPos(hwnd, None, 0, 0, state.win_w, h, SWP_NOMOVE | SWP_NOZORDER);
     }
 }
+
+fn ctrl_held() -> bool {
+    unsafe { GetKeyState(VK_CONTROL.0 as i32) & (0x8000u16 as i16) != 0 }
+}
+
+// ── clipboard ─────────────────────────────────────────────────────────────────
+
+unsafe fn clipboard_write(hwnd: HWND, text: &str) {
+    unsafe {
+        let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let byte_len = utf16.len() * 2;
+
+        let hmem = match GlobalAlloc(GMEM_MOVEABLE, byte_len) {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+
+        let ptr = GlobalLock(hmem);
+        if ptr.is_null() {
+            return;
+        }
+        std::ptr::copy_nonoverlapping(utf16.as_ptr(), ptr as *mut u16, utf16.len());
+        let _ = GlobalUnlock(hmem);
+
+        if OpenClipboard(Some(hwnd)).is_ok() {
+            let _ = EmptyClipboard();
+            let _ = SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(hmem.0)));
+            let _ = CloseClipboard();
+        }
+    }
+}
+
+unsafe fn clipboard_read() -> Option<String> {
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
+        let handle = match GetClipboardData(CF_UNICODETEXT.0 as u32) {
+            Ok(h) => h,
+            Err(_) => {
+                let _ = CloseClipboard();
+                return None;
+            }
+        };
+        let ptr = GlobalLock(HGLOBAL(handle.0)) as *const u16;
+        if ptr.is_null() {
+            let _ = CloseClipboard();
+            return None;
+        }
+
+        let mut len = 0;
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let text = String::from_utf16_lossy(slice).to_string();
+
+        let _ = GlobalUnlock(HGLOBAL(handle.0));
+        let _ = CloseClipboard();
+        Some(text)
+    }
+}
+
+// ── window setup ──────────────────────────────────────────────────────────────
 
 pub fn create_and_run() {
     unsafe {
@@ -120,7 +199,7 @@ pub fn create_and_run() {
 
         let state = Box::new(WindowState {
             renderer: Renderer::new(hwnd).ok(),
-            app, // move in — already constructed
+            app,
             win_w,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
@@ -136,6 +215,8 @@ pub fn create_and_run() {
     }
 }
 
+// ── wnd_proc ──────────────────────────────────────────────────────────────────
+
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -149,24 +230,15 @@ unsafe extern "system" fn wnd_proc(
             WM_NCHITTEST => {
                 let base = DefWindowProcW(hwnd, msg, wparam, lparam);
                 if !ptr.is_null() {
-                    // lparam is screen coords — convert GET_Y_LPARAM to client y
                     let screen_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-                    let pt = POINT { x: 0, y: screen_y };
-                    // get window top in screen coords from GetWindowRect
                     let mut wr = RECT::default();
                     let _ = GetWindowRect(hwnd, &mut wr);
                     let client_y = screen_y - wr.top;
-                    let scale = if !ptr.is_null() {
-                        (*ptr).renderer.as_ref().map(|r| r.scale).unwrap_or(1.0)
-                    } else {
-                        1.0
-                    };
+                    let scale = (*ptr).renderer.as_ref().map(|r| r.scale).unwrap_or(1.0);
                     let title_bar_h = (layout::TITLE_BAR_H * scale) as i32;
                     if client_y >= 0 && client_y < title_bar_h {
                         return LRESULT(HTCAPTION as isize);
                     }
-                    // suppress unused warning
-                    let _ = pt;
                 }
                 base
             }
@@ -212,6 +284,10 @@ unsafe extern "system" fn wnd_proc(
             }
             WM_CHAR => {
                 if !ptr.is_null() {
+                    // suppress Ctrl+key chars (they arrive as control chars 1–26)
+                    if ctrl_held() {
+                        return LRESULT(0);
+                    }
                     if let Some(c) = char::from_u32(wparam.0 as u32) {
                         if !c.is_control() {
                             (*ptr).app.push_char(c);
@@ -224,7 +300,42 @@ unsafe extern "system" fn wnd_proc(
             }
             WM_KEYDOWN => {
                 if !ptr.is_null() {
-                    match wparam.0 as u32 {
+                    let ctrl = ctrl_held();
+                    let vk = wparam.0 as u32;
+
+                    // ── Ctrl combos ───────────────────────────────────────────
+                    if ctrl {
+                        match vk {
+                            VK_A => {
+                                (*ptr).app.select_all();
+                                let _ = InvalidateRect(Some(hwnd), None, false);
+                            }
+                            VK_C => {
+                                if let Some(text) = (*ptr).app.copy_text() {
+                                    clipboard_write(hwnd, &text);
+                                }
+                            }
+                            VK_X => {
+                                if let Some(text) = (*ptr).app.cut_text() {
+                                    clipboard_write(hwnd, &text);
+                                    resize_to_results(hwnd, &*ptr);
+                                    let _ = InvalidateRect(Some(hwnd), None, false);
+                                }
+                            }
+                            VK_V => {
+                                if let Some(text) = clipboard_read() {
+                                    (*ptr).app.paste_text(&text);
+                                    resize_to_results(hwnd, &*ptr);
+                                    let _ = InvalidateRect(Some(hwnd), None, false);
+                                }
+                            }
+                            _ => {}
+                        }
+                        return LRESULT(0);
+                    }
+
+                    // ── non-Ctrl keys ─────────────────────────────────────────
+                    match vk {
                         VK_BACK => {
                             (*ptr).app.pop_char();
                             resize_to_results(hwnd, &*ptr);
@@ -238,6 +349,14 @@ unsafe extern "system" fn wnd_proc(
                                 resize_to_results(hwnd, &*ptr);
                                 let _ = InvalidateRect(Some(hwnd), None, false);
                             }
+                        }
+                        VK_LEFT => {
+                            (*ptr).app.move_cursor_left();
+                            let _ = InvalidateRect(Some(hwnd), None, false);
+                        }
+                        VK_RIGHT => {
+                            (*ptr).app.move_cursor_right();
+                            let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_UP => {
                             (*ptr).app.select_prev();

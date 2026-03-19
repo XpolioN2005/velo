@@ -21,6 +21,8 @@ pub struct AppState {
     pub user_commands: Vec<UserCommand>,
     pub results: Vec<MatchedCommand>,
     pub config: AppConfig,
+    pub cursor: usize,
+    pub selection: Option<(usize, usize)>, // (start, end), char indices, start <= end
 }
 
 impl AppState {
@@ -36,6 +38,8 @@ impl AppState {
             user_commands,
             results: Vec::new(),
             config,
+            cursor: 0,
+            selection: None,
         };
         state.rebuild_results();
         state
@@ -47,48 +51,221 @@ impl AppState {
         save_config(&self.config);
     }
 
+    // ── active buffer helpers ─────────────────────────────────────────────────
+
+    pub fn active_buf(&self) -> &str {
+        match self.mode {
+            InputMode::Query => &self.query,
+            InputMode::ArgInput { .. } => &self.arg_buffer,
+        }
+    }
+
+    fn active_buf_mut(&mut self) -> &mut String {
+        match self.mode {
+            InputMode::Query => &mut self.query,
+            InputMode::ArgInput { .. } => &mut self.arg_buffer,
+        }
+    }
+
+    fn active_limit(&self) -> usize {
+        match self.mode {
+            InputMode::Query => 100,
+            InputMode::ArgInput { .. } => 200,
+        }
+    }
+
+    // ── selection helpers ─────────────────────────────────────────────────────
+
+    pub fn select_all(&mut self) {
+        let len = self.active_buf().len();
+        if len > 0 {
+            self.selection = Some((0, len));
+            self.cursor = len;
+        }
+    }
+
+    /// Delete the selected byte range from the active buffer.
+    /// Returns the start index so caller can set cursor.
+    /// Clears selection. Caller must handle query rebuild if needed.
+    fn delete_selection(&mut self) -> usize {
+        let (s, e) = match self.selection.take() {
+            Some(range) => range,
+            None => return self.cursor,
+        };
+        let buf = self.active_buf_mut();
+        buf.drain(s..e);
+        self.cursor = s;
+        s
+    }
+
+    pub fn selected_text(&self) -> Option<&str> {
+        let (s, e) = self.selection?;
+        self.active_buf().get(s..e)
+    }
+
+    // ── push_char ─────────────────────────────────────────────────────────────
+
     pub fn push_char(&mut self, c: char) {
+        // delete selection first if any
+        if self.selection.is_some() {
+            let start = self.delete_selection();
+            let limit = self.active_limit();
+            let buf = self.active_buf_mut();
+            if buf.len() < limit {
+                buf.insert(start, c);
+                self.cursor = start + c.len_utf8();
+            }
+            if matches!(self.mode, InputMode::Query) {
+                self.selected = 0;
+                self.rebuild_results();
+            }
+            return;
+        }
+
+        let limit = self.active_limit();
+        let cursor = self.cursor;
+        let buf = self.active_buf_mut();
+        if buf.len() < limit {
+            buf.insert(cursor, c);
+            self.cursor = cursor + c.len_utf8();
+        }
+
+        if matches!(self.mode, InputMode::Query) {
+            self.selected = 0;
+            self.rebuild_results();
+        }
+    }
+
+    // ── pop_char ──────────────────────────────────────────────────────────────
+
+    pub fn pop_char(&mut self) {
+        // backspace with selection → delete selection
+        if self.selection.is_some() {
+            self.delete_selection();
+            if matches!(self.mode, InputMode::Query) {
+                self.selected = 0;
+                self.rebuild_results();
+            }
+            return;
+        }
+
         match self.mode {
             InputMode::Query => {
-                if self.query.len() < 100 {
-                    self.query.push(c);
+                if self.cursor > 0 {
+                    // remove char before cursor
+                    let new_cursor = self.prev_char_boundary(&self.query.clone(), self.cursor);
+                    self.query.remove(new_cursor);
+                    self.cursor = new_cursor;
                     self.selected = 0;
                     self.rebuild_results();
                 }
             }
             InputMode::ArgInput { .. } => {
-                if self.arg_buffer.len() < 200 {
-                    self.arg_buffer.push(c);
+                if self.arg_buffer.is_empty() {
+                    self.mode = InputMode::Query;
+                    self.arg_buffer.clear();
+                    self.cursor = self.query.len();
+                } else if self.cursor > 0 {
+                    let new_cursor = self.prev_char_boundary(&self.arg_buffer.clone(), self.cursor);
+                    self.arg_buffer.remove(new_cursor);
+                    self.cursor = new_cursor;
                 }
             }
         }
     }
 
-    pub fn pop_char(&mut self) {
-        match self.mode {
-            InputMode::Query => {
-                self.query.pop();
-                self.selected = 0;
-                self.rebuild_results();
-            }
-            InputMode::ArgInput { .. } => {
-                if self.arg_buffer.is_empty() {
-                    self.mode = InputMode::Query;
-                    self.arg_buffer.clear();
-                } else {
-                    self.arg_buffer.pop();
-                }
-            }
+    // ── arrow keys while selected ─────────────────────────────────────────────
+
+    pub fn move_cursor_left(&mut self) {
+        if let Some((start, _)) = self.selection.take() {
+            self.cursor = start;
+        } else {
+            self.cursor = self.prev_char_boundary(self.active_buf(), self.cursor);
         }
     }
+
+    pub fn move_cursor_right(&mut self) {
+        if let Some((_, end)) = self.selection.take() {
+            self.cursor = end;
+        } else {
+            self.cursor = self.next_char_boundary(self.active_buf(), self.cursor);
+        }
+    }
+
+    // ── clipboard helpers ─────────────────────────────────────────────────────
+
+    /// Text to copy/cut — selected range or nothing.
+    pub fn copy_text(&self) -> Option<String> {
+        self.selected_text().map(|s| s.to_owned())
+    }
+
+    /// Cut: return text, delete selection.
+    pub fn cut_text(&mut self) -> Option<String> {
+        let text = self.selected_text()?.to_owned();
+        self.delete_selection();
+        if matches!(self.mode, InputMode::Query) {
+            self.selected = 0;
+            self.rebuild_results();
+        }
+        Some(text)
+    }
+
+    /// Paste: replace selection or insert at cursor. Respects limit.
+    pub fn paste_text(&mut self, text: &str) {
+        if self.selection.is_some() {
+            self.delete_selection();
+        }
+        let cursor = self.cursor;
+        let limit = self.active_limit();
+        let buf = self.active_buf_mut();
+        let available = limit.saturating_sub(buf.len());
+        let insert: String = text.chars().take(available).collect();
+        let byte_len = insert.len();
+        buf.insert_str(cursor, &insert);
+        self.cursor = cursor + byte_len;
+        if matches!(self.mode, InputMode::Query) {
+            self.selected = 0;
+            self.rebuild_results();
+        }
+    }
+
+    // ── char boundary utils ───────────────────────────────────────────────────
+
+    fn prev_char_boundary(&self, s: &str, pos: usize) -> usize {
+        if pos == 0 {
+            return 0;
+        }
+        let mut p = pos - 1;
+        while p > 0 && !s.is_char_boundary(p) {
+            p -= 1;
+        }
+        p
+    }
+
+    fn next_char_boundary(&self, s: &str, pos: usize) -> usize {
+        if pos >= s.len() {
+            return s.len();
+        }
+        let mut p = pos + 1;
+        while p < s.len() && !s.is_char_boundary(p) {
+            p += 1;
+        }
+        p
+    }
+
+    // ── clear_query ───────────────────────────────────────────────────────────
 
     pub fn clear_query(&mut self) {
         self.query.clear();
         self.arg_buffer.clear();
         self.mode = InputMode::Query;
         self.selected = 0;
+        self.cursor = 0;
+        self.selection = None;
         self.rebuild_results();
     }
+
+    // ── result navigation ─────────────────────────────────────────────────────
 
     pub fn select_next(&mut self) {
         if matches!(self.mode, InputMode::Query) && !self.results.is_empty() {
@@ -101,6 +278,8 @@ impl AppState {
             self.selected = self.selected.saturating_sub(1);
         }
     }
+
+    // ── prompt / enter / escape ───────────────────────────────────────────────
 
     pub fn current_prompt(&self) -> Option<&str> {
         match &self.mode {
@@ -133,6 +312,8 @@ impl AppState {
                         collected_args: Vec::new(),
                     };
                     self.arg_buffer.clear();
+                    self.cursor = 0;
+                    self.selection = None;
                     WindowAction::Nothing
                 }
             }
@@ -145,6 +326,8 @@ impl AppState {
             InputMode::ArgInput { .. } => {
                 self.mode = InputMode::Query;
                 self.arg_buffer.clear();
+                self.cursor = self.query.len();
+                self.selection = None;
             }
             InputMode::Query => {}
         }
@@ -153,6 +336,8 @@ impl AppState {
     pub fn escape_should_hide(&self) -> bool {
         matches!(self.mode, InputMode::Query)
     }
+
+    // ── internals ─────────────────────────────────────────────────────────────
 
     fn advance_arg(&mut self) -> WindowAction {
         let (command, optional) = match &self.mode {
@@ -174,6 +359,8 @@ impl AppState {
 
         let arg = self.arg_buffer.clone();
         self.arg_buffer.clear();
+        self.cursor = 0;
+        self.selection = None;
         let prompts_len = self.get_prompts(command).len();
 
         if let InputMode::ArgInput {

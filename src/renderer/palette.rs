@@ -34,6 +34,18 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
             theme::TITLE_TEXT,
         );
 
+        // title bar bottom border
+        let _ = draw::draw_rect_filled(
+            &renderer.target,
+            windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F {
+                left: 0.0,
+                top: layout::TITLE_BAR_H - 1.0,
+                right: w,
+                bottom: layout::TITLE_BAR_H,
+            },
+            theme::DIVIDER,
+        );
+
         // outer border
         let border_color = if app.focused {
             theme::BORDER_FOCUS
@@ -57,6 +69,18 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
                         theme::TEXT_DIM,
                     );
                 } else {
+                    // selection highlight behind text
+                    if let Some(sel) = app.selection {
+                        let _ = draw::draw_selection_highlight(
+                            &renderer.target,
+                            &renderer.dwrite,
+                            &app.query,
+                            &renderer.text_ui,
+                            text_rect,
+                            sel,
+                            theme::SELECTION_BG,
+                        );
+                    }
                     let _ = draw::draw_text(
                         &renderer.target,
                         &app.query,
@@ -77,6 +101,18 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
                         theme::TEXT_DIM,
                     );
                 } else {
+                    // selection highlight behind text
+                    if let Some(sel) = app.selection {
+                        let _ = draw::draw_selection_highlight(
+                            &renderer.target,
+                            &renderer.dwrite,
+                            &app.arg_buffer,
+                            &renderer.text_ui,
+                            text_rect,
+                            sel,
+                            theme::SELECTION_BG,
+                        );
+                    }
                     let _ = draw::draw_text(
                         &renderer.target,
                         &app.arg_buffer,

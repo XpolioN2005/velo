@@ -229,3 +229,70 @@ pub fn draw_rect_filled(
         Ok(())
     }
 }
+
+pub fn draw_selection_highlight(
+    target: &ID2D1HwndRenderTarget,
+    dwrite: &IDWriteFactory,
+    text: &str,
+    fmt: &TextFormat,
+    rect: D2D_RECT_F,
+    selection: (usize, usize), // byte indices
+    color: D2D1_COLOR_F,
+) -> Result<()> {
+    unsafe {
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let rect_w = rect.right - rect.left;
+        let rect_h = rect.bottom - rect.top;
+        let layout: IDWriteTextLayout =
+            dwrite.CreateTextLayout(&wide, &fmt.format, rect_w, rect_h)?;
+
+        // convert byte indices to utf-16 code unit indices
+        let start_cu = byte_to_utf16_offset(text, selection.0);
+        let end_cu = byte_to_utf16_offset(text, selection.1);
+
+        if start_cu >= end_cu {
+            return Ok(());
+        }
+
+        let mut actual_count = 0u32;
+        let _ = layout.HitTestTextRange(
+            start_cu as u32,
+            (end_cu - start_cu) as u32,
+            rect.left,
+            rect.top,
+            None,
+            &mut actual_count,
+        );
+
+        if actual_count == 0 {
+            return Ok(());
+        }
+
+        let mut hit_metrics = vec![DWRITE_HIT_TEST_METRICS::default(); actual_count as usize];
+        let _ = layout.HitTestTextRange(
+            start_cu as u32,
+            (end_cu - start_cu) as u32,
+            rect.left,
+            rect.top,
+            Some(hit_metrics.as_mut_slice()),
+            &mut actual_count,
+        );
+
+        let brush: ID2D1SolidColorBrush = target.CreateSolidColorBrush(&color, None)?;
+        for m in &hit_metrics[..actual_count as usize] {
+            let sel_rect = D2D_RECT_F {
+                left: m.left,
+                top: rect.top + 10.0, // small vertical inset so it doesn't bleed into border
+                right: m.left + m.width,
+                bottom: rect.bottom - 10.0,
+            };
+            target.FillRectangle(&sel_rect, &brush);
+        }
+
+        Ok(())
+    }
+}
+
+fn byte_to_utf16_offset(s: &str, byte_pos: usize) -> usize {
+    s[..byte_pos.min(s.len())].encode_utf16().count()
+}
