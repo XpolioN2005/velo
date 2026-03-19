@@ -17,12 +17,12 @@ use windows::{
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW,
                 GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCAPTION, IDC_ARROW,
-                LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN,
-                SW_HIDE, SW_SHOW, SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW,
-                SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR, WM_CLOSE, WM_DESTROY,
-                WM_EXITSIZEMOVE, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_NCHITTEST, WM_PAINT,
-                WM_SETFOCUS, WM_SIZE, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
-                WS_VISIBLE,
+                KillTimer, LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN,
+                SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow,
+                SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR,
+                WM_CLOSE, WM_DESTROY, WM_EXITSIZEMOVE, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
+                WM_NCHITTEST, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+                WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -49,11 +49,14 @@ const VK_V: u32 = 0x56;
 const VK_X: u32 = 0x58;
 
 const HOTKEY_ID: i32 = 1;
+const CARET_TIMER_ID: usize = 2;
+const CARET_BLINK_MS: u32 = 530;
 
 struct WindowState {
     renderer: Option<Renderer>,
     app: AppState,
     win_w: i32,
+    caret_visible: bool,
 }
 
 unsafe fn hide(hwnd: HWND, ptr: *mut WindowState) {
@@ -74,6 +77,7 @@ unsafe fn show(hwnd: HWND, ptr: *mut WindowState) {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
+        (*ptr).caret_visible = true;
         let _ = InvalidateRect(Some(hwnd), None, false);
     }
 }
@@ -201,11 +205,16 @@ pub fn create_and_run() {
             renderer: Renderer::new(hwnd).ok(),
             app,
             win_w,
+            caret_visible: true,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
 
         let _ = UpdateWindow(hwnd);
         let _ = RegisterHotKey(Some(hwnd), HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_P.0 as u32);
+
+        // caret timer runs for the lifetime of the process — hidden window
+        // has focused=false so the caret is never drawn even while toggling
+        let _ = SetTimer(Some(hwnd), CARET_TIMER_ID, CARET_BLINK_MS, None);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -256,6 +265,13 @@ unsafe extern "system" fn wnd_proc(
                 }
                 LRESULT(0)
             }
+            WM_TIMER => {
+                if !ptr.is_null() && wparam.0 == CARET_TIMER_ID {
+                    (*ptr).caret_visible = !(*ptr).caret_visible;
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
+                LRESULT(0)
+            }
             WM_SIZE => {
                 if !ptr.is_null() {
                     if let Some(r) = &(*ptr).renderer {
@@ -271,6 +287,7 @@ unsafe extern "system" fn wnd_proc(
             WM_SETFOCUS => {
                 if !ptr.is_null() {
                     (*ptr).app.focused = true;
+                    (*ptr).caret_visible = true;
                     let _ = InvalidateRect(Some(hwnd), None, false);
                 }
                 LRESULT(0)
@@ -284,13 +301,13 @@ unsafe extern "system" fn wnd_proc(
             }
             WM_CHAR => {
                 if !ptr.is_null() {
-                    // suppress Ctrl+key chars (they arrive as control chars 1–26)
                     if ctrl_held() {
                         return LRESULT(0);
                     }
                     if let Some(c) = char::from_u32(wparam.0 as u32) {
                         if !c.is_control() {
                             (*ptr).app.push_char(c);
+                            (*ptr).caret_visible = true;
                             resize_to_results(hwnd, &*ptr);
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
@@ -303,7 +320,6 @@ unsafe extern "system" fn wnd_proc(
                     let ctrl = ctrl_held();
                     let vk = wparam.0 as u32;
 
-                    // ── Ctrl combos ───────────────────────────────────────────
                     if ctrl {
                         match vk {
                             VK_A => {
@@ -318,6 +334,7 @@ unsafe extern "system" fn wnd_proc(
                             VK_X => {
                                 if let Some(text) = (*ptr).app.cut_text() {
                                     clipboard_write(hwnd, &text);
+                                    (*ptr).caret_visible = true;
                                     resize_to_results(hwnd, &*ptr);
                                     let _ = InvalidateRect(Some(hwnd), None, false);
                                 }
@@ -325,6 +342,7 @@ unsafe extern "system" fn wnd_proc(
                             VK_V => {
                                 if let Some(text) = clipboard_read() {
                                     (*ptr).app.paste_text(&text);
+                                    (*ptr).caret_visible = true;
                                     resize_to_results(hwnd, &*ptr);
                                     let _ = InvalidateRect(Some(hwnd), None, false);
                                 }
@@ -334,10 +352,10 @@ unsafe extern "system" fn wnd_proc(
                         return LRESULT(0);
                     }
 
-                    // ── non-Ctrl keys ─────────────────────────────────────────
                     match vk {
                         VK_BACK => {
                             (*ptr).app.pop_char();
+                            (*ptr).caret_visible = true;
                             resize_to_results(hwnd, &*ptr);
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
@@ -346,16 +364,19 @@ unsafe extern "system" fn wnd_proc(
                                 hide(hwnd, ptr);
                             } else {
                                 (*ptr).app.escape();
+                                (*ptr).caret_visible = true;
                                 resize_to_results(hwnd, &*ptr);
                                 let _ = InvalidateRect(Some(hwnd), None, false);
                             }
                         }
                         VK_LEFT => {
                             (*ptr).app.move_cursor_left();
+                            (*ptr).caret_visible = true;
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_RIGHT => {
                             (*ptr).app.move_cursor_right();
+                            (*ptr).caret_visible = true;
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
                         VK_UP => {
@@ -374,6 +395,7 @@ unsafe extern "system" fn wnd_proc(
                                 hide(hwnd, ptr);
                             }
                             WindowAction::Nothing => {
+                                (*ptr).caret_visible = true;
                                 resize_to_results(hwnd, &*ptr);
                                 let _ = InvalidateRect(Some(hwnd), None, false);
                             }
@@ -386,7 +408,7 @@ unsafe extern "system" fn wnd_proc(
             WM_PAINT => {
                 if !ptr.is_null() {
                     if let Some(r) = &(*ptr).renderer {
-                        palette::draw_palette(r, &(*ptr).app, hwnd);
+                        palette::draw_palette(r, &(*ptr).app, hwnd, (*ptr).caret_visible);
                     }
                 }
                 let mut ps = PAINTSTRUCT::default();
@@ -402,6 +424,7 @@ unsafe extern "system" fn wnd_proc(
             }
             WM_DESTROY => {
                 if !ptr.is_null() {
+                    let _ = KillTimer(Some(hwnd), CARET_TIMER_ID);
                     drop(Box::from_raw(ptr));
                 }
                 PostQuitMessage(0);

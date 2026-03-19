@@ -4,7 +4,12 @@ use crate::app::{AppState, InputMode};
 use crate::command::CommandRef;
 use crate::renderer::{Renderer, draw, layout, theme};
 
-pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::Foundation::HWND) {
+pub fn draw_palette(
+    renderer: &Renderer,
+    app: &AppState,
+    hwnd: windows::Win32::Foundation::HWND,
+    caret_visible: bool,
+) {
     unsafe {
         renderer.begin();
         renderer.clear();
@@ -57,10 +62,12 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
 
         // query bar
         let text_rect = layout::query_bar_rect(w);
+        let active_buf = app.active_buf();
+        let show_placeholder = active_buf.is_empty();
 
         match &app.mode {
             InputMode::Query => {
-                if app.query.is_empty() {
+                if show_placeholder {
                     let _ = draw::draw_text(
                         &renderer.target,
                         "Search...",
@@ -69,7 +76,7 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
                         theme::TEXT_DIM,
                     );
                 } else {
-                    // selection highlight behind text
+                    // selection highlight
                     if let Some(sel) = app.selection {
                         let _ = draw::draw_selection_highlight(
                             &renderer.target,
@@ -79,6 +86,19 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
                             text_rect,
                             sel,
                             theme::SELECTION_BG,
+                        );
+                    }
+                    // caret — only when no selection
+                    if caret_visible && app.selection.is_none() {
+                        let _ = draw::draw_caret(
+                            &renderer.target,
+                            &renderer.dwrite,
+                            &app.query,
+                            &renderer.text_ui,
+                            text_rect,
+                            app.cursor,
+                            renderer.scale,
+                            theme::TEXT,
                         );
                     }
                     let _ = draw::draw_text(
@@ -92,7 +112,7 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
             }
             InputMode::ArgInput { .. } => {
                 let prompt = app.current_prompt().unwrap_or("Enter value:");
-                if app.arg_buffer.is_empty() {
+                if show_placeholder {
                     let _ = draw::draw_text(
                         &renderer.target,
                         prompt,
@@ -101,7 +121,7 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
                         theme::TEXT_DIM,
                     );
                 } else {
-                    // selection highlight behind text
+                    // selection highlight
                     if let Some(sel) = app.selection {
                         let _ = draw::draw_selection_highlight(
                             &renderer.target,
@@ -111,6 +131,19 @@ pub fn draw_palette(renderer: &Renderer, app: &AppState, hwnd: windows::Win32::F
                             text_rect,
                             sel,
                             theme::SELECTION_BG,
+                        );
+                    }
+                    // caret — only when no selection
+                    if caret_visible && app.selection.is_none() {
+                        let _ = draw::draw_caret(
+                            &renderer.target,
+                            &renderer.dwrite,
+                            &app.query,
+                            &renderer.text_ui,
+                            text_rect,
+                            app.cursor,
+                            renderer.scale,
+                            theme::TEXT,
                         );
                     }
                     let _ = draw::draw_text(

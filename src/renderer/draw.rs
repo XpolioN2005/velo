@@ -296,3 +296,45 @@ pub fn draw_selection_highlight(
 fn byte_to_utf16_offset(s: &str, byte_pos: usize) -> usize {
     s[..byte_pos.min(s.len())].encode_utf16().count()
 }
+
+pub fn draw_caret(
+    target: &ID2D1HwndRenderTarget,
+    dwrite: &IDWriteFactory,
+    text: &str,
+    fmt: &TextFormat,
+    rect: D2D_RECT_F,
+    cursor: usize,
+    scale: f32,
+    color: D2D1_COLOR_F,
+) -> Result<()> {
+    unsafe {
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let rect_w = rect.right - rect.left;
+        let rect_h = rect.bottom - rect.top;
+        let layout: IDWriteTextLayout =
+            dwrite.CreateTextLayout(&wide, &fmt.format, rect_w, rect_h)?;
+
+        let cursor_cu = byte_to_utf16_offset(text, cursor);
+
+        let mut x = 0.0f32;
+        let mut y = 0.0f32;
+        let mut metrics = DWRITE_HIT_TEST_METRICS::default();
+        let _ = layout.HitTestTextPosition(cursor_cu as u32, false, &mut x, &mut y, &mut metrics);
+
+        let caret_x = rect.left + x;
+        let caret_w = 1.5 / scale;
+        let inset = 15.0 / scale;
+
+        let caret_rect = D2D_RECT_F {
+            left: caret_x,
+            top: rect.top + inset,
+            right: caret_x + caret_w,
+            bottom: rect.bottom - inset,
+        };
+
+        let brush: ID2D1SolidColorBrush = target.CreateSolidColorBrush(&color, None)?;
+        target.FillRectangle(&caret_rect, &brush);
+
+        Ok(())
+    }
+}
