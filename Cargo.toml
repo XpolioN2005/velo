@@ -3,6 +3,10 @@ name = "velo"
 version = "0.1.0"
 edition = "2024"
 
+[build-dependencies]
+winres = "0.1.12"
+
+
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
