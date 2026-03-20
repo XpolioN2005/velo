@@ -138,7 +138,7 @@ pub fn draw_palette(
                         let _ = draw::draw_caret(
                             &renderer.target,
                             &renderer.dwrite,
-                            &app.query,
+                            &app.arg_buffer,
                             &renderer.text_ui,
                             text_rect,
                             app.cursor,
