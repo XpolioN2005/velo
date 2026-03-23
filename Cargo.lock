@@ -135,9 +135,14 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_yaml",
+ "velo_exec",
  "windows",
  "winres",
 ]
+
+[[package]]
+name = "velo_exec"
+version = "0.1.0"
 
 [[package]]
 name = "windows"
