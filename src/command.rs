@@ -5,11 +5,23 @@ pub enum InternalAction {
     ReloadConfig,
 }
 
-// Per-prompt definition — label shown in query bar, optional flag
 #[derive(Clone)]
 pub struct Prompt {
     pub label: &'static str,
     pub optional: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum OnFailure {
+    Stop,
+    Continue,
+}
+
+// Output of a completed sequential step — available as {stdout} / {exit_code}
+#[derive(Clone)]
+pub struct StepOutput {
+    pub stdout: String,
+    pub exit_code: i32,
 }
 
 #[derive(Clone)]
@@ -24,16 +36,19 @@ pub enum Action {
         url: &'static str,
         prompts: &'static [Prompt],
     },
-    Compound(Vec<Action>),
+    Compound {
+        steps: Vec<Action>,
+        sequential: bool,
+        on_failure: OnFailure,
+    },
 }
 
 impl Action {
-    // Collect all prompts across an action — compound flattens in order
     pub fn all_prompts(&self) -> Vec<&Prompt> {
         match self {
             Action::LaunchProcess { prompts, .. } => prompts.iter().collect(),
             Action::OpenUrl { prompts, .. } => prompts.iter().collect(),
-            Action::Compound(steps) => steps.iter().flat_map(|s| s.all_prompts()).collect(),
+            Action::Compound { steps, .. } => steps.iter().flat_map(|s| s.all_prompts()).collect(),
             Action::Internal(_) => vec![],
         }
     }
@@ -70,7 +85,11 @@ pub enum UserAction {
         url: String,
         prompts: Vec<UserPrompt>,
     },
-    Compound(Vec<UserAction>),
+    Compound {
+        steps: Vec<UserAction>,
+        sequential: bool,
+        on_failure: OnFailure,
+    },
 }
 
 impl UserAction {
@@ -78,7 +97,9 @@ impl UserAction {
         match self {
             UserAction::LaunchProcess { prompts, .. } => prompts.iter().collect(),
             UserAction::OpenUrl { prompts, .. } => prompts.iter().collect(),
-            UserAction::Compound(steps) => steps.iter().flat_map(|s| s.all_prompts()).collect(),
+            UserAction::Compound { steps, .. } => {
+                steps.iter().flat_map(|s| s.all_prompts()).collect()
+            }
         }
     }
 }
@@ -94,14 +115,25 @@ pub enum WindowAction {
     Quit,
     Hide,
     Nothing,
+    RunSequence,
 }
 
-// Substitute {0}, {1} etc in a string with collected args
-pub fn substitute(template: &str, args: &[String]) -> String {
+// Substitute {0},{1} positional args and optionally {stdout}/{exit_code}
+// from the previous sequential step.
+pub fn substitute(template: &str, args: &[String], prev: Option<&StepOutput>) -> String {
     let mut result = template.to_string();
+
+    // positional args
     for (i, arg) in args.iter().enumerate() {
         result = result.replace(&format!("{{{}}}", i), arg);
     }
+
+    // previous step output
+    if let Some(p) = prev {
+        result = result.replace("{stdout}", &p.stdout.trim().to_string());
+        result = result.replace("{exit_code}", &p.exit_code.to_string());
+    }
+
     result
 }
 

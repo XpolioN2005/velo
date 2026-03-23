@@ -19,9 +19,9 @@ use windows::{
                 GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCAPTION, IDC_ARROW,
                 KillTimer, LoadCursorW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN,
                 SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow,
-                SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR,
-                WM_CLOSE, WM_DESTROY, WM_EXITSIZEMOVE, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
-                WM_NCHITTEST, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+                SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_APP,
+                WM_CHAR, WM_CLOSE, WM_DESTROY, WM_EXITSIZEMOVE, WM_HOTKEY, WM_KEYDOWN,
+                WM_KILLFOCUS, WM_NCHITTEST, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_TIMER, WNDCLASSEXW,
                 WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
             },
         },
@@ -51,6 +51,10 @@ const VK_X: u32 = 0x58;
 const HOTKEY_ID: i32 = 1;
 const CARET_TIMER_ID: usize = 2;
 const CARET_BLINK_MS: u32 = 530;
+
+// posted by sequential worker when done or failed
+const WM_APP_SEQUENCE_DONE: u32 = WM_APP + 1;
+const WM_APP_SEQUENCE_FAILED: u32 = WM_APP + 2;
 
 struct WindowState {
     renderer: Option<Renderer>,
@@ -211,9 +215,6 @@ pub fn create_and_run() {
 
         let _ = UpdateWindow(hwnd);
         let _ = RegisterHotKey(Some(hwnd), HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_P.0 as u32);
-
-        // caret timer runs for the lifetime of the process — hidden window
-        // has focused=false so the caret is never drawn even while toggling
         let _ = SetTimer(Some(hwnd), CARET_TIMER_ID, CARET_BLINK_MS, None);
 
         let mut msg = MSG::default();
@@ -270,6 +271,16 @@ unsafe extern "system" fn wnd_proc(
                     (*ptr).caret_visible = !(*ptr).caret_visible;
                     let _ = InvalidateRect(Some(hwnd), None, false);
                 }
+                LRESULT(0)
+            }
+            // ── sequential compound callbacks ─────────────────────────────────
+            x if x == WM_APP_SEQUENCE_DONE => {
+                // sequence completed successfully — window already hidden,
+                // nothing to do. Future: signal output window.
+                LRESULT(0)
+            }
+            x if x == WM_APP_SEQUENCE_FAILED => {
+                // sequence failed — stub, output window will handle this later
                 LRESULT(0)
             }
             WM_SIZE => {
@@ -387,7 +398,7 @@ unsafe extern "system" fn wnd_proc(
                             (*ptr).app.select_next();
                             let _ = InvalidateRect(Some(hwnd), None, false);
                         }
-                        VK_RETURN => match (*ptr).app.enter() {
+                        VK_RETURN => match (*ptr).app.enter(hwnd.0 as isize) {
                             WindowAction::Quit => {
                                 PostQuitMessage(0);
                             }
@@ -399,6 +410,7 @@ unsafe extern "system" fn wnd_proc(
                                 resize_to_results(hwnd, &*ptr);
                                 let _ = InvalidateRect(Some(hwnd), None, false);
                             }
+                            WindowAction::RunSequence => {}
                         },
                         _ => {}
                     }

@@ -1,4 +1,4 @@
-use crate::command::{UserAction, UserCommand, UserPrompt};
+use crate::command::{OnFailure, UserAction, UserCommand, UserPrompt};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -76,7 +76,7 @@ fn ensure_default_config(path: &PathBuf) {
     let _ = std::fs::write(path, default);
 }
 
-// ── commands.yaml (unchanged) ─────────────────────────────────────────────────
+// ── commands.yaml ─────────────────────────────────────────────────────────────
 
 mod yaml_types {
     use serde::Deserialize;
@@ -104,6 +104,19 @@ mod yaml_types {
     }
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum RawOnFailure {
+        Stop,
+        Continue,
+    }
+
+    impl Default for RawOnFailure {
+        fn default() -> Self {
+            RawOnFailure::Stop
+        }
+    }
+
+    #[derive(Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum RawAction {
         Launch {
@@ -119,7 +132,25 @@ mod yaml_types {
         },
         Compound {
             steps: Vec<RawAction>,
+            // mode: "sequential" | "parallel" — default parallel
+            #[serde(default)]
+            mode: RawCompoundMode,
+            #[serde(default)]
+            on_failure: RawOnFailure,
         },
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum RawCompoundMode {
+        Parallel,
+        Sequential,
+    }
+
+    impl Default for RawCompoundMode {
+        fn default() -> Self {
+            RawCompoundMode::Parallel
+        }
     }
 }
 
@@ -127,6 +158,13 @@ fn raw_prompt(p: yaml_types::RawPrompt) -> UserPrompt {
     UserPrompt {
         label: p.label,
         optional: p.optional,
+    }
+}
+
+fn raw_on_failure(r: yaml_types::RawOnFailure) -> OnFailure {
+    match r {
+        yaml_types::RawOnFailure::Stop => OnFailure::Stop,
+        yaml_types::RawOnFailure::Continue => OnFailure::Continue,
     }
 }
 
@@ -145,9 +183,15 @@ fn raw_to_user_action(raw: yaml_types::RawAction) -> UserAction {
             url,
             prompts: prompts.into_iter().map(raw_prompt).collect(),
         },
-        yaml_types::RawAction::Compound { steps } => {
-            UserAction::Compound(steps.into_iter().map(raw_to_user_action).collect())
-        }
+        yaml_types::RawAction::Compound {
+            steps,
+            mode,
+            on_failure,
+        } => UserAction::Compound {
+            steps: steps.into_iter().map(raw_to_user_action).collect(),
+            sequential: matches!(mode, yaml_types::RawCompoundMode::Sequential),
+            on_failure: raw_on_failure(on_failure),
+        },
     }
 }
 

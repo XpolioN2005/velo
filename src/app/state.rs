@@ -22,7 +22,7 @@ pub struct AppState {
     pub results: Vec<MatchedCommand>,
     pub config: AppConfig,
     pub cursor: usize,
-    pub selection: Option<(usize, usize)>, // (start, end), char indices, start <= end
+    pub selection: Option<(usize, usize)>,
 }
 
 impl AppState {
@@ -84,9 +84,6 @@ impl AppState {
         }
     }
 
-    /// Delete the selected byte range from the active buffer.
-    /// Returns the start index so caller can set cursor.
-    /// Clears selection. Caller must handle query rebuild if needed.
     fn delete_selection(&mut self) -> usize {
         let (s, e) = match self.selection.take() {
             Some(range) => range,
@@ -106,7 +103,6 @@ impl AppState {
     // ── push_char ─────────────────────────────────────────────────────────────
 
     pub fn push_char(&mut self, c: char) {
-        // delete selection first if any
         if self.selection.is_some() {
             let start = self.delete_selection();
             let limit = self.active_limit();
@@ -139,7 +135,6 @@ impl AppState {
     // ── pop_char ──────────────────────────────────────────────────────────────
 
     pub fn pop_char(&mut self) {
-        // backspace with selection → delete selection
         if self.selection.is_some() {
             self.delete_selection();
             if matches!(self.mode, InputMode::Query) {
@@ -152,7 +147,6 @@ impl AppState {
         match self.mode {
             InputMode::Query => {
                 if self.cursor > 0 {
-                    // remove char before cursor
                     let new_cursor = self.prev_char_boundary(&self.query.clone(), self.cursor);
                     self.query.remove(new_cursor);
                     self.cursor = new_cursor;
@@ -174,7 +168,7 @@ impl AppState {
         }
     }
 
-    // ── arrow keys while selected ─────────────────────────────────────────────
+    // ── arrow keys ────────────────────────────────────────────────────────────
 
     pub fn move_cursor_left(&mut self) {
         if let Some((start, _)) = self.selection.take() {
@@ -192,14 +186,12 @@ impl AppState {
         }
     }
 
-    // ── clipboard helpers ─────────────────────────────────────────────────────
+    // ── clipboard ─────────────────────────────────────────────────────────────
 
-    /// Text to copy/cut — selected range or nothing.
     pub fn copy_text(&self) -> Option<String> {
         self.selected_text().map(|s| s.to_owned())
     }
 
-    /// Cut: return text, delete selection.
     pub fn cut_text(&mut self) -> Option<String> {
         let text = self.selected_text()?.to_owned();
         self.delete_selection();
@@ -210,7 +202,6 @@ impl AppState {
         Some(text)
     }
 
-    /// Paste: replace selection or insert at cursor. Respects limit.
     pub fn paste_text(&mut self, text: &str) {
         if self.selection.is_some() {
             self.delete_selection();
@@ -295,7 +286,8 @@ impl AppState {
         }
     }
 
-    pub fn enter(&mut self) -> WindowAction {
+    // hwnd passed in so execute_cmd can hand it to the sequential worker
+    pub fn enter(&mut self, hwnd: isize) -> WindowAction {
         match &self.mode {
             InputMode::Query => {
                 if self.results.is_empty() {
@@ -304,7 +296,7 @@ impl AppState {
                 let cmd_ref = self.results[self.selected].cmd_ref;
                 let prompts = self.get_prompts(cmd_ref);
                 if prompts.is_empty() {
-                    self.execute_cmd(cmd_ref, vec![])
+                    self.execute_cmd(cmd_ref, vec![], hwnd)
                 } else {
                     self.mode = InputMode::ArgInput {
                         command: cmd_ref,
@@ -317,7 +309,7 @@ impl AppState {
                     WindowAction::Nothing
                 }
             }
-            InputMode::ArgInput { .. } => self.advance_arg(),
+            InputMode::ArgInput { .. } => self.advance_arg(hwnd),
         }
     }
 
@@ -339,7 +331,7 @@ impl AppState {
 
     // ── internals ─────────────────────────────────────────────────────────────
 
-    fn advance_arg(&mut self) -> WindowAction {
+    fn advance_arg(&mut self, hwnd: isize) -> WindowAction {
         let (command, optional) = match &self.mode {
             InputMode::ArgInput {
                 command,
@@ -374,7 +366,7 @@ impl AppState {
             if *prompt_index >= prompts_len {
                 let args = collected_args.clone();
                 self.mode = InputMode::Query;
-                return self.execute_cmd(command, args);
+                return self.execute_cmd(command, args, hwnd);
             }
         }
         WindowAction::Nothing
@@ -397,10 +389,14 @@ impl AppState {
         }
     }
 
-    fn execute_cmd(&self, cmd_ref: CommandRef, args: Vec<String>) -> WindowAction {
+    fn execute_cmd(&self, cmd_ref: CommandRef, args: Vec<String>, hwnd: isize) -> WindowAction {
         match cmd_ref {
-            CommandRef::BuiltIn(idx) => executor::run_builtin(&BUILT_INS[idx].action, &args, 0),
-            CommandRef::User(idx) => executor::run_user(&self.user_commands[idx].action, &args, 0),
+            CommandRef::BuiltIn(idx) => {
+                executor::run_builtin(&BUILT_INS[idx].action, &args, 0, hwnd)
+            }
+            CommandRef::User(idx) => {
+                executor::run_user(&self.user_commands[idx].action, &args, 0, hwnd)
+            }
         }
     }
 
