@@ -1,5 +1,5 @@
-pub mod action;
-mod executor;
+pub mod core;
+pub mod executor;
 
-pub use action::{Action, InternalAction, Step};
-pub use executor::{ExecEvent, run};
+pub use core::*;
+pub use executor::Executor;
