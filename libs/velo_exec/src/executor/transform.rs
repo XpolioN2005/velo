@@ -1,5 +1,5 @@
 use super::resolve;
-use crate::core::*;
+use crate::{core::*, executor::resolve::value_to_string};
 
 pub fn run_transform(t: &Transform, ctx: &Context) -> StepResult {
     match t {
@@ -8,7 +8,10 @@ pub fn run_transform(t: &Transform, ctx: &Context) -> StepResult {
             pattern,
             group,
         } => {
-            let input = resolve::resolve_string(input, ctx);
+            let input = match input {
+                Some(s) => resolve::resolve_string(s, ctx),
+                None => value_to_string(&ctx.last),
+            };
 
             let re = match regex::Regex::new(pattern) {
                 Ok(r) => r,

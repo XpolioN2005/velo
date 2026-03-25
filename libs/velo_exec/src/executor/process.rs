@@ -19,7 +19,7 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
         ExecMode::FireForget => match cmd.spawn() {
             Ok(_) => StepResult {
                 success: true,
-                value: Value::None,
+                value: ctx.last.clone(),
                 error: None,
             },
             Err(_) => StepResult {

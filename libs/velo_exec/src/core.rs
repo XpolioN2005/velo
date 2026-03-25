@@ -57,7 +57,7 @@ pub enum ExecMode {
 
 pub enum Transform {
     Regex {
-        input: String,
+        input: Option<String>,
         pattern: String,
         group: usize,
     },

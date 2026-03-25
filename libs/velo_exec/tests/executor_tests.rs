@@ -29,7 +29,7 @@ fn basic_execution_updates_last() {
 
     let steps = vec![Step::Action {
         action: Action::Transform(Transform::Regex {
-            input: "abc123".into(),
+            input: Some("abc123".into()),
             pattern: r"(\d+)".into(),
             group: 1,
         }),
@@ -54,7 +54,7 @@ fn variable_assignment_works() {
 
     let steps = vec![Step::Action {
         action: Action::Transform(Transform::Regex {
-            input: "val=42".into(),
+            input: Some("val=42".into()),
             pattern: r"=(\d+)".into(),
             group: 1,
         }),
@@ -77,7 +77,7 @@ fn placeholder_args_work() {
 
     let steps = vec![Step::Action {
         action: Action::Transform(Transform::Regex {
-            input: "{0}".into(),
+            input: Some("{0}".into()),
             pattern: r"(hello)".into(),
             group: 1,
         }),
@@ -101,7 +101,7 @@ fn placeholder_vars_work() {
 
     let steps = vec![Step::Action {
         action: Action::Transform(Transform::Regex {
-            input: "hello {var:name}".into(),
+            input: Some("hello {var:name}".into()),
             pattern: r"hello (.+)".into(),
             group: 1,
         }),
@@ -149,7 +149,7 @@ fn transform_regex_works() {
 
     let steps = vec![Step::Action {
         action: Action::Transform(Transform::Regex {
-            input: "abc999xyz".into(),
+            input: Some("abc999xyz".into()),
             pattern: r"(\d+)".into(),
             group: 1,
         }),
@@ -167,21 +167,105 @@ fn transform_regex_works() {
 }
 
 #[test]
+fn transform_uses_ctx_last_when_none() {
+    let exec = executor();
+
+    let steps = vec![
+        Step::Action {
+            action: Action::Transform(Transform::Regex {
+                input: Some("file.rs:123".into()),
+                pattern: r"(.+):\d+".into(),
+                group: 1,
+            }),
+            assign_to: None,
+        },
+        Step::Action {
+            action: Action::Transform(Transform::Regex {
+                input: None, // ← key test
+                pattern: r"(.+)\.rs".into(),
+                group: 1,
+            }),
+            assign_to: Some("name".into()),
+        },
+    ];
+
+    let mut ctx = Context::new(vec![]);
+
+    let result = exec.run(&steps, &mut ctx);
+
+    assert!(result.success);
+
+    match ctx.vars.get("name") {
+        Some(Value::String(s)) => assert_eq!(s, "file"),
+        _ => panic!("ctx.last chaining failed"),
+    }
+}
+
+#[test]
+fn real_rg_pipeline() {
+    let exec = executor();
+
+    let steps = vec![
+        // Step 1: run ripgrep
+        Step::Action {
+            action: Action::LaunchProcess {
+                program: "rg".into(),
+                args: vec![
+                    "fn".into(), // search term
+                    ".".into(),
+                    "--max-count".into(),
+                    "100".into(),
+                ],
+                mode: ExecMode::Capture,
+            },
+            assign_to: None,
+        },
+        // Step 2: extract file name (before colon)
+        Step::Action {
+            action: Action::Transform(Transform::Regex {
+                input: None,
+                pattern: r"^([^:\n]+)".into(),
+                group: 1,
+            }),
+            assign_to: Some("file".into()),
+        },
+        Step::Action {
+            action: Action::LaunchProcess {
+                program: "cmd".into(),
+                args: vec!["/C".into(), "code {var:file}".into()],
+                mode: ExecMode::FireForget,
+            },
+            assign_to: None,
+        },
+    ];
+
+    let mut ctx = Context::new(vec![]);
+    ctx.cwd = Some(std::env::current_dir().unwrap());
+
+    let result = exec.run(&steps, &mut ctx);
+
+    println!("RAW OUTPUT = {:?}", ctx.last);
+    println!("file = {:?}", ctx.vars.get("file"));
+
+    assert!(result.success);
+}
+
+#[test]
 fn failure_stops_execution() {
     let exec = executor();
 
     let steps = vec![
         Step::Action {
             action: Action::Transform(Transform::Regex {
-                input: "abc".into(),
-                pattern: r"(\d+)".into(), // will fail
+                input: Some("abc".into()),
+                pattern: r"(\d+)".into(),
                 group: 1,
             }),
             assign_to: Some("x".into()),
         },
         Step::Action {
             action: Action::Transform(Transform::Regex {
-                input: "123".into(),
+                input: Some("123".into()),
                 pattern: r"(\d+)".into(),
                 group: 1,
             }),
@@ -194,7 +278,7 @@ fn failure_stops_execution() {
     let result = exec.run(&steps, &mut ctx);
 
     assert!(!result.success);
-    assert!(ctx.vars.get("y").is_none()); // second step must NOT run
+    assert!(ctx.vars.get("y").is_none());
 }
 
 #[test]

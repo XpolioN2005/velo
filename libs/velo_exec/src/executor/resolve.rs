@@ -23,7 +23,7 @@ pub fn resolve_args(args: &[String], ctx: &Context) -> Vec<String> {
     args.iter().map(|a| resolve_string(a, ctx)).collect()
 }
 
-fn value_to_string(v: &Value) -> String {
+pub fn value_to_string(v: &Value) -> String {
     match v {
         Value::None => "".into(),
         Value::String(s) => s.clone(),
