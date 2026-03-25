@@ -16,6 +16,7 @@ pub fn run_transform(t: &Transform, ctx: &Context) -> StepResult {
                     return StepResult {
                         success: false,
                         value: Value::None,
+                        error: None,
                     };
                 }
             };
@@ -25,6 +26,7 @@ pub fn run_transform(t: &Transform, ctx: &Context) -> StepResult {
                     return StepResult {
                         success: true,
                         value: Value::String(m.as_str().to_string()),
+                        error: None,
                     };
                 }
             }
@@ -32,6 +34,7 @@ pub fn run_transform(t: &Transform, ctx: &Context) -> StepResult {
             StepResult {
                 success: false,
                 value: Value::None,
+                error: None,
             }
         }
     }

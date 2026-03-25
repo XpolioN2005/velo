@@ -20,10 +20,12 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
             Ok(_) => StepResult {
                 success: true,
                 value: Value::None,
+                error: None,
             },
             Err(_) => StepResult {
                 success: false,
                 value: Value::None,
+                error: None,
             },
         },
 
@@ -33,11 +35,13 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
                 StepResult {
                     success: out.status.success(),
                     value: Value::String(stdout),
+                    error: None,
                 }
             }
             Err(_) => StepResult {
                 success: false,
                 value: Value::None,
+                error: None,
             },
         },
 
@@ -48,6 +52,7 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
                     return StepResult {
                         success: false,
                         value: Value::None,
+                        error: None,
                     };
                 }
             };
@@ -65,6 +70,7 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
             StepResult {
                 success: status.map(|s| s.success()).unwrap_or(false),
                 value: Value::None,
+                error: None,
             }
         }
 
@@ -75,6 +81,7 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
                     return StepResult {
                         success: false,
                         value: Value::None,
+                        error: None,
                     };
                 }
             };
@@ -89,6 +96,7 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
                             return StepResult {
                                 success: true,
                                 value: Value::String(m.as_str().to_string()),
+                                error: None,
                             };
                         }
                     }
@@ -98,6 +106,7 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
             StepResult {
                 success: false,
                 value: Value::None,
+                error: None,
             }
         }
     }

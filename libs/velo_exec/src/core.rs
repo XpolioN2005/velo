@@ -32,12 +32,14 @@ impl Context {
 #[derive(Copy, Clone, Debug)]
 pub enum SystemActionId {
     GetCwd,
+    SetCwd,
     JoinPath,
 }
 
 pub struct StepResult {
     pub success: bool,
     pub value: Value,
+    pub error: Option<String>,
 }
 
 pub trait SystemHandler {

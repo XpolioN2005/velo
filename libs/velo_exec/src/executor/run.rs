@@ -25,6 +25,7 @@ impl<H: SystemHandler> Executor<H> {
         StepResult {
             success: true,
             value: ctx.last.clone(),
+            error: None,
         }
     }
 
