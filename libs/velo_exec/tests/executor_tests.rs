@@ -388,3 +388,21 @@ fn split_and_first_pipeline() {
         _ => panic!("Split/First pipeline failed"),
     }
 }
+
+#[test]
+fn open_url_action_works() {
+    let exec = executor();
+
+    let steps = vec![Step::Action {
+        action: Action::OpenUrl {
+            url: "https://example.com".into(),
+        },
+        assign_to: None,
+    }];
+
+    let mut ctx = Context::new(vec![]);
+
+    let result = exec.run(&steps, &mut ctx);
+
+    assert!(result.success);
+}

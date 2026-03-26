@@ -1,5 +1,5 @@
 use super::{Executor, process, transform};
-use crate::core::*;
+use crate::{core::*, executor::resolve};
 
 impl<H: SystemHandler> Executor<H> {
     pub fn run(&self, steps: &[Step], ctx: &mut Context) -> StepResult {
@@ -37,6 +37,18 @@ impl<H: SystemHandler> Executor<H> {
                 mode,
                 shell,
             } => process::run_process(program, args, mode, *shell, ctx),
+
+            Action::OpenUrl { url } => {
+                let url = resolve::resolve_string(url, ctx);
+
+                process::run_process(
+                    "start",
+                    &vec!["".into(), url],
+                    &ExecMode::FireForget,
+                    true,
+                    ctx,
+                )
+            }
             Action::System(id) => self.system.run(*id, ctx),
             Action::Transform(t) => transform::run_transform(t, ctx),
         }

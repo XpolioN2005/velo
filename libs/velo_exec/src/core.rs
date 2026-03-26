@@ -78,6 +78,9 @@ pub enum Action {
         mode: ExecMode,
         shell: bool,
     },
+    OpenUrl {
+        url: String,
+    },
     System(SystemActionId),
     Transform(Transform),
 }
