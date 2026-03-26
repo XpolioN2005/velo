@@ -1,7 +1,7 @@
-# Velo — Build Log
+# Velo — Build Log (Updated)
 
-> Internal development log.
-> Detailed logs and devlogs will be written post-stabilization.
+> Internal development log
+> Reflects current real architecture and progress
 
 ---
 
@@ -40,6 +40,7 @@
 ### Step 4 — Input Handling ✅
 
 - `WM_CHAR` text input
+
 - `WM_KEYDOWN` controls:
   - Backspace
   - Escape
@@ -62,13 +63,13 @@
 
 ---
 
-### Step 5.5 — Execution (Initial) ✅
+### Step 5.5 — Execution (Legacy) ✅
 
 - `app/executor.rs`
-- Launch process
-- Open URL
-- Compound commands (basic)
-- Internal actions (Quit, ReloadConfig)
+- Basic process launch
+- URL opening
+- Internal actions
+- Early compound support
 
 ---
 
@@ -99,14 +100,15 @@
 
 ---
 
-# ⚠️ Pivot Point — Full Execution Rewrite
+# Pivot — Execution Rewrite
 
-### Reason
+### Problem
 
 ```text
-Execution layer became tightly coupled with UI and command system
-Difficult to extend (sequence, parallel, argument flow)
-Hard to reason about control flow
+Execution layer was tightly coupled to UI
+Hard to extend
+Control flow unclear
+Not scalable
 ```
 
 ---
@@ -114,86 +116,185 @@ Hard to reason about control flow
 ### Decision
 
 ```text
-Rewrite execution as a separate library (velo_exec)
+Extract execution into separate crate: velo_exec
 ```
 
 ---
 
-### Goals
+### Outcome
 
-- Decouple execution from UI
-- Unify command model
-- Enable:
-  - Sequential execution
-  - Parallel execution
-  - Future extensibility
+```text
+Execution is now:
+- decoupled
+- pipeline-based
+- context-driven
+```
 
 ---
 
-# Phase 1 — New Architecture (In Progress)
+# Phase 1 — New Execution Engine
 
-### Step 8 — Execution Engine Extraction 🔄
+### Step 8 — velo_exec (Core Engine) ✅
 
 - [x] Created `libs/velo_exec`
 - [x] Workspace integration
-- [x] Defined new `Action` model
-- [x] Introduced `ExecEvent`
-- [ ] Removed old executor (`app/executor.rs`)
-- [ ] Implement `Launch`
-- [ ] Implement `OpenUrl`
-- [ ] Implement `Sequence`
-- [ ] Implement `Parallel`
+- [x] Defined Step-based execution model
+- [x] Implemented Context system
+- [x] Implemented sequential executor
 
 ---
 
-### Step 9 — Integration Layer 🔄
+### Step 8.1 — Process Execution ✅
 
-- [ ] Map `Action → ExecEvent → WindowAction`
-- [ ] Handle `InternalAction` in UI
-- [ ] Replace old execution paths
-- [ ] Validate ArgInput → Action pipeline
-
----
-
-### Step 10 — Stabilization (Planned)
-
-- [ ] Ensure no UI ↔ executor leakage
-- [ ] Remove legacy code paths
-- [ ] Clean command mapping
-- [ ] Validate full execution flow
+- [x] Direct process execution
+- [x] Shell execution (`cmd /C`)
+- [x] Working directory support (`cwd`)
+- [x] Modes:
+  - FireForget
+  - Capture
+  - Stream
+  - StreamMatch
 
 ---
 
-# Future Work (Deferred)
+### Step 8.2 — Pipeline System ✅
 
-## Devlogs
+- [x] `ctx.last` chaining
+- [x] Step-to-step data flow
+- [x] Implicit input via `None`
+- [x] Stable sequential execution
+
+---
+
+### Step 8.3 — Variable System ✅
+
+- [x] `ctx.vars`
+- [x] `{var:name}` resolution
+- [x] assignment via `assign_to`
+- [x] reusable pipeline values
+
+---
+
+### Step 8.4 — Placeholder System ✅
+
+- [x] `{0}`, `{1}` args
+- [x] `{var:name}`
+- [x] `{last}`
+- [x] integrated into resolver
+
+---
+
+### Step 8.5 — Transform Engine ✅
+
+- [x] Regex transform
+- [x] Split transform
+- [x] First transform
+- [x] ctx.last fallback behavior
+
+---
+
+### Step 8.6 — OpenUrl Action ✅
+
+- [x] Added `Action::OpenUrl`
+- [x] Uses `cmd /C start "" <url>`
+- [x] Works with system default browser
+
+---
+
+### Step 8.7 — Error Handling ✅
+
+- [x] `StepResult`
+- [x] success flag
+- [x] optional error message
+- [x] failure stops execution
+
+---
+
+### Step 8.8 — Testing ✅
+
+- [x] Unit tests for:
+  - Regex
+  - Variables
+  - Args
+  - ctx.last chaining
+  - Process execution
+  - Real `rg` pipeline
+  - Split + First pipeline
+  - OpenUrl
+
+---
+
+# Phase 2 — Integration (Current Focus)
+
+### Step 9 — UI ↔ Executor Integration 🔄
+
+- [ ] Replace old executor completely
+- [ ] Map YAML → `Vec<Step>`
+- [ ] Feed args into `Context`
+- [ ] Trigger `Executor::run`
+- [ ] Handle `StepResult` in UI
+
+---
+
+### Step 9.1 — Command Mapping Rewrite 🔄
+
+- [ ] Replace Action-based mapping
+- [ ] Build Step pipelines from YAML
+- [ ] Support transforms in config
+
+---
+
+### Step 9.2 — ArgInput Integration 🔄
+
+- [ ] Collect user input
+- [ ] Inject into `ctx.args`
+- [ ] Ensure full resolution before execution
+
+---
+
+# Phase 3 — Stabilization
+
+- [ ] Remove all legacy execution code
+- [ ] Ensure strict separation (UI vs executor)
+- [ ] Validate real-world commands:
+  - search → open file
+  - url → browser
+  - cli tools
+
+---
+
+# Future Work
+
+## Execution Improvements
+
+- [ ] Add more transforms:
+  - Replace
+  - Trim
+  - JSON parse
+
+- [ ] Improve error visibility
+
+- [ ] Logging system
+
+---
+
+## Devlogs (Deferred)
 
 Will include:
 
-- Architecture decisions
-- Execution model breakdown
-- Rendering pipeline notes
-- Trade-offs vs PowerToys
-
----
-
-## Build Logs (Detailed)
-
-Will include:
-
-- Step-by-step evolution
+- Execution architecture evolution
+- Pipeline design decisions
 - Mistakes and rewrites
 - Performance tuning
-- Edge case handling
 
 ---
 
 # Current Status
 
 ```text
-Core UI: Stable
-Execution: Rewriting
-Architecture: Improving
+UI: Stable
+Execution Engine: Working (pipeline-based)
+Integration: In progress
 ```
 
 ---
@@ -202,24 +303,9 @@ Architecture: Improving
 
 ```text
 From:
-    simple launcher with ad-hoc execution
+    UI-driven execution
 
 To:
-    structured system with clean execution engine
-```
-
----
-
-# Note
-
-No detailed logs will be written until:
-
-```text
-execution system is stable and integrated
-```
-
-Focus remains on:
-
-```text
-correct architecture first
+    pipeline-based execution engine
+    with clean separation
 ```

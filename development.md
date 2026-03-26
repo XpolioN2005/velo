@@ -1,50 +1,6 @@
 # Velo — Command Palette for Windows
 
-> Living doc. Update as steps complete.
-
----
-
-## Stack
-
-- **Language:** Rust (stable, edition 2024)
-- **Win32 bindings:** `windows = "0.62.2"`
-- **Rendering:** Direct2D + DirectWrite
-- **Execution Engine:** `libs/velo_exec` (custom)
-- **Config:** `serde` + `serde_yaml`
-- **No:** eframe, egui, wgpu, or any GUI framework
-
----
-
-## Project Structure
-
-```text
-velo/
-├── Cargo.toml            — workspace root
-├── src/
-│   ├── main.rs           — entry point, DPI awareness
-│   ├── window.rs         — Win32 message loop only
-│   ├── command.rs        — YAML → Action mapping
-│   ├── config.rs         — config + commands loader
-│   ├── app/
-│   │   ├── mod.rs        — re-exports
-│   │   ├── state.rs      — AppState, InputMode
-│   │   └── search.rs     — fuzzy search
-│   └── renderer/
-│       ├── mod.rs
-│       ├── renderer.rs
-│       ├── draw.rs
-│       ├── layout.rs
-│       ├── theme.rs
-│       └── palette.rs
-│
-└── libs/
-    └── velo_exec/
-        ├── Cargo.toml
-        └── src/
-            ├── lib.rs
-            ├── action.rs
-            └── executor.rs
-```
+> Living doc. Reflects actual implementation.
 
 ---
 
@@ -53,7 +9,7 @@ velo/
 ### Core Principle
 
 ```text
-UI builds Action → velo_exec runs → UI reacts
+UI builds Steps → velo_exec executes → UI reacts
 ```
 
 ---
@@ -67,68 +23,53 @@ UI builds Action → velo_exec runs → UI reacts
 - No renderer
 - No AppState
 - No UI decisions
+- Owns:
+  - execution pipeline
+  - context
+  - transforms
+  - process handling
 
 #### UI (`velo`)
 
-- Builds `Action`
-- Handles `InternalAction`
-- Maps `ExecEvent → WindowAction`
+- Builds `Vec<Step>`
+- Resolves all `{}` placeholders
+- Provides `Context.args`
+- Handles Internal actions
+- Reacts to execution result
 
 ---
 
-## Action Model
+## Execution Model
 
-Unified. No built-in vs user split.
+```text
+Command = Vec<Step>
+
+Step
+├── action: Action
+├── assign_to: Option<String>
+```
+
+---
+
+## Action Model (velo_exec)
 
 ```text
 Action
-├── Internal(InternalAction)
-├── Launch { program, args }
+├── LaunchProcess { program, args, mode, shell }
 ├── OpenUrl { url }
-├── Sequence(Vec<Step>)
-├── Parallel(Vec<Action>)
+├── System(SystemActionId)
+├── Transform(Transform)
 ```
 
 ---
 
-### Step (for Sequence)
+## Transform
 
 ```text
-Step
-├── action: Action
-├── wait: bool
-├── stop_on_fail: bool
-```
-
----
-
-### InternalAction
-
-```text
-Quit
-Hide
-ReloadConfig
-```
-
-⚠️ Handled ONLY in UI
-
----
-
-## Execution API
-
-Inside `velo_exec`:
-
-```rust
-pub fn run(action: &Action) -> ExecEvent
-```
-
----
-
-### ExecEvent
-
-```text
-Done
-Failed(String)
+Transform
+├── Regex { input?, pattern, group }
+├── Split { input?, delimiter }
+├── First
 ```
 
 ---
@@ -136,246 +77,257 @@ Failed(String)
 ## Execution Flow
 
 ```text
-Enter key
-  ↓
-Resolve command → Action
-  ↓
-if Internal → UI handles directly
-  ↓
-else → velo_exec::run()
-  ↓
-ExecEvent
-  ↓
-map → WindowAction
+Step 1 → result → ctx.last
+Step 2 → uses ctx.last (if input=None)
+Step N → continues chain
 ```
 
 ---
 
-## WindowAction
+## Context
 
 ```text
-Quit
-Hide
-Nothing
+ctx.args   → user input (from UI)
+ctx.vars   → assigned variables
+ctx.cwd    → working directory
+ctx.last   → pipeline value
 ```
-
-Represents **UI response**, not execution logic.
 
 ---
 
-## Input System
+## Pipeline Rules
+
+### Data Flow
 
 ```text
-Query
-ArgInput { command, prompt_index, collected_args }
+ctx.last is ALWAYS updated after each step
 ```
 
 ---
 
-### Critical Rule
+### Input Resolution
 
 ```text
-All argument substitution happens BEFORE execution
+input = Some(...) → resolved string
+input = None      → ctx.last
 ```
-
-Executor never sees `{0}`.
 
 ---
 
-## Config Files
-
-Located at:
+### Placeholders (executor-level)
 
 ```text
-%APPDATA%\velo\
+{0}, {1}        → args
+{var:name}      → variables
+{last}          → previous output
 ```
 
 ---
 
-### config.yaml
+## Execution Semantics (CURRENT)
 
-```yaml
-# velo configuration
-
-# window_x: 960
-# window_y: 400
+```text
+success = false → STOP execution
+error != None   → informational
 ```
 
-- Auto-saved on drag
-- Auto-generated if missing
-- Invalid position → centered fallback
+No `critical`, no branching yet.
 
 ---
 
-### commands.yaml
+## Process Execution
+
+```text
+LaunchProcess
+├── program: String
+├── args: Vec<String>
+├── mode: ExecMode
+├── shell: bool
+```
+
+---
+
+### ExecMode
+
+```text
+FireForget
+Capture
+Stream
+StreamMatch(regex)
+```
+
+---
+
+### Shell Mode (Windows)
+
+```text
+shell = true  → cmd /C ...
+shell = false → direct execution
+```
+
+---
+
+## OpenUrl
+
+```text
+Action::OpenUrl { url }
+```
+
+### Behavior
+
+```text
+cmd /C start "" <url>
+```
+
+- Uses default browser
+- Uses shell internally
+
+---
+
+## Example Pipeline (REAL)
+
+```text
+rg fn
+→ "src/main.rs:10\n..."
+→ Split("\n")
+→ First
+→ "src/main.rs:10"
+→ Split(":")
+→ First
+→ "src/main.rs"
+→ LaunchProcess(code)
+```
+
+---
+
+## Execution API (Actual)
+
+```rust
+Executor::run(&steps, &mut ctx) -> StepResult
+```
+
+---
+
+### StepResult
+
+```text
+success: bool
+value: Value
+error: Option<String>
+```
+
+---
+
+## Value Model
+
+```text
+Value
+├── None
+├── String
+├── Bool
+├── Number
+├── List(Vec<Value>)
+```
+
+---
+
+## YAML Mapping (WORK IN PROGRESS)
 
 ```yaml
 commands:
-  - name: Open Notepad
-    description: Launch Notepad
-    aliases: [notepad, np]
-    action:
-      type: launch
-      program: notepad.exe
-      args: []
+  - name: Search Code
+    steps:
+      - run:
+          program: rg
+          args: ["{0}"]
+          mode: capture
 
-  - name: Google
-    description: Search Google
-    aliases: [google, g]
-    action:
-      type: open_url
-      url: "https://google.com/search?q={0}"
-      prompts:
-        - label: "Search:"
-          optional: false
+      - transform:
+          type: split
+          delimiter: "\n"
+
+      - transform:
+          type: first
+
+      - transform:
+          type: split
+          delimiter: ":"
+
+      - transform:
+          type: first
+          assign_to: file
+
+      - run:
+          program: code
+          args: ["{var:file}"]
+          mode: fire_forget
+          shell: true
 ```
 
 ---
 
 ## Command Mapping
 
-YAML → `Action`
+```text
+YAML → Vec<Step>
+```
+
+NOT `Action::Sequence` anymore.
+
+---
+
+## Removed Architecture (OBSOLETE)
 
 ```text
-launch     → Action::Launch
-open_url   → Action::OpenUrl
-compound   → Action::Sequence
+Action::Sequence ❌
+Action::Parallel ❌
+wait flag ❌
+stop_on_fail ❌
 ```
 
 ---
 
-## Message Loop Flow
+## Input Rule (IMPORTANT)
 
 ```text
-WM_HOTKEY        → show window
-WM_NCHITTEST     → title bar drag
-WM_EXITSIZEMOVE  → save position
-WM_PAINT         → draw UI
-WM_CHAR          → input text
-WM_KEYDOWN       → navigation + actions
-WM_SETFOCUS      → focused = true
-WM_KILLFOCUS     → hide window
-WM_SIZE          → resize renderer
-WM_CLOSE         → hide (not destroy)
-WM_DESTROY       → quit app
+All {0}, {var}, etc. resolved BEFORE execution
+```
+
+Executor should ideally only see final values
+(but currently still supports resolution)
+
+---
+
+## Current System Capabilities
+
+```text
+✔ Sequential execution
+✔ Shared context (vars, args, cwd, last)
+✔ Process execution (shell + direct)
+✔ Regex transform
+✔ Split + First transforms
+✔ Variable assignment
+✔ OpenUrl support
+✔ Real pipelines working (rg → parse → use)
 ```
 
 ---
 
-## UI Layout
-
-| Constant    | Value |
-| ----------- | ----- |
-| TITLE_BAR_H | 26.0  |
-| QUERY_BAR_H | 48.0  |
-| ROW_H       | 40.0  |
-| DIVIDER_H   | 1.0   |
-| PADDING_H   | 16.0  |
-| MAX_ROWS    | 8     |
-
----
-
-## Rendering
-
-- Direct2D render target (cached)
-- DirectWrite text layouts
-- DPI-aware scaling
-- Renderer dropped on hide
-
----
-
-## Data Model
-
-### CommandRef
-
-```text
-BuiltIn(usize) | User(usize)
-```
-
----
-
-### AppState
-
-```text
-query: String
-arg_buffer: String
-mode: InputMode
-focused: bool
-selected: usize
-user_commands: Vec<UserCommand>
-results: Vec<MatchedCommand>
-config: AppConfig
-```
-
----
-
-## Resource Targets
-
-| Metric     | Value  |
-| ---------- | ------ |
-| RAM idle   | ~3 MB  |
-| RAM active | ~29 MB |
-| CPU hidden | 0%     |
-| Show delay | ~80ms  |
-
----
-
-## Window Flags
-
-```text
-WS_POPUP
-WS_EX_TOOLWINDOW
-WS_EX_TOPMOST
-```
-
----
-
-## Notes & Gotchas
-
-- Renderer must be cached
-- `WM_SIZE` must call resize
-- Logical vs physical pixels must be handled correctly
-- `unsafe` required inside extern functions (Rust 2024)
-- `WM_CLOSE` hides, does not destroy
-- Executor must stay pure
-- No UI logic inside execution layer
-- No duplicate execution logic in UI
-- All args resolved before execution
-
----
-
-## Removed Architecture
-
-```text
-app/executor.rs ❌
-run_builtin ❌
-run_user ❌
-```
-
-Replaced by:
-
-```text
-libs/velo_exec ✅
-```
-
----
-
-## Built-in Commands
-
-| Name            | Aliases      | Action                 |
-| --------------- | ------------ | ---------------------- |
-| Quit Velo       | exit, close  | Internal::Quit         |
-| Reload Config   | refresh      | Internal::ReloadConfig |
-| Open PowerShell | ps, terminal | Launch powershell      |
-| Ping            | ping         | Launch ping {0}        |
-
----
-
-# Current potentia; State
+## Current Position
 
 ```text
 velo = UI layer
 velo_exec = execution engine
 ```
 
-Clean separation. Scalable. No duplication.
+---
+
+## Next Direction
+
+```text
+1. Improve YAML → Step mapping
+2. Add transforms (replace, trim)
+3. Improve logging/debugging
+4. Integrate cleanly with UI
+5. THEN refine execution behavior (critical, etc.)
+```
