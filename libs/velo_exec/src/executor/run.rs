@@ -35,7 +35,8 @@ impl<H: SystemHandler> Executor<H> {
                 program,
                 args,
                 mode,
-            } => process::run_process(program, args, mode, ctx),
+                shell,
+            } => process::run_process(program, args, mode, *shell, ctx),
             Action::System(id) => self.system.run(*id, ctx),
             Action::Transform(t) => transform::run_transform(t, ctx),
         }

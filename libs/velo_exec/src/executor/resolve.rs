@@ -9,6 +9,9 @@ pub fn resolve_string(input: &str, ctx: &Context) -> String {
         out = out.replace(&key, arg);
     }
 
+    // {last}
+    out = out.replace("{last}", &value_to_string(&ctx.last));
+
     // {var:name}
     for (k, v) in &ctx.vars {
         let key = format!("{{var:{}}}", k);
@@ -29,5 +32,10 @@ pub fn value_to_string(v: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
+        Value::List(list) => list
+            .iter()
+            .map(value_to_string)
+            .collect::<Vec<_>>()
+            .join(" "),
     }
 }

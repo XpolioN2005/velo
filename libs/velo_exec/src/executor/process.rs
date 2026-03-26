@@ -4,12 +4,26 @@ use std::process::{Command, Stdio};
 use super::resolve;
 use crate::core::*;
 
-pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Context) -> StepResult {
+pub fn run_process(
+    program: &str,
+    args: &[String],
+    mode: &ExecMode,
+    shell: bool,
+    ctx: &Context,
+) -> StepResult {
     let program = resolve::resolve_string(program, ctx);
     let args = resolve::resolve_args(args, ctx);
 
-    let mut cmd = Command::new(program);
-    cmd.args(args);
+    let mut cmd = if shell {
+        let full = format!("{} {}", program, args.join(" "));
+        let mut c = Command::new("cmd");
+        c.args(["/C", &full]);
+        c
+    } else {
+        let mut c = Command::new(program);
+        c.args(args);
+        c
+    };
 
     if let Some(cwd) = &ctx.cwd {
         cmd.current_dir(cwd);
@@ -19,40 +33,47 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
         ExecMode::FireForget => match cmd.spawn() {
             Ok(_) => StepResult {
                 success: true,
-                value: ctx.last.clone(),
+                value: ctx.last.clone(), // preserve pipeline
                 error: None,
             },
-            Err(_) => StepResult {
+            Err(e) => StepResult {
                 success: false,
-                value: Value::None,
-                error: None,
+                value: ctx.last.clone(), // do NOT break pipeline value
+                error: Some(e.to_string()),
             },
         },
 
         ExecMode::Capture => match cmd.output() {
             Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let mut output = String::from_utf8_lossy(&out.stdout).to_string();
+
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if !stderr.trim().is_empty() {
+                    output.push_str("\n");
+                    output.push_str(&stderr);
+                }
+
                 StepResult {
                     success: out.status.success(),
-                    value: Value::String(stdout),
+                    value: Value::String(output),
                     error: None,
                 }
             }
-            Err(_) => StepResult {
+            Err(e) => StepResult {
                 success: false,
                 value: Value::None,
-                error: None,
+                error: Some(e.to_string()),
             },
         },
 
         ExecMode::Stream => {
             let mut child = match cmd.stdout(Stdio::piped()).spawn() {
                 Ok(c) => c,
-                Err(_) => {
+                Err(e) => {
                     return StepResult {
                         success: false,
                         value: Value::None,
-                        error: None,
+                        error: Some(e.to_string()),
                     };
                 }
             };
@@ -62,11 +83,12 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
 
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    println!("{}", line); // temporary
+                    println!("{}", line);
                 }
             }
 
             let status = child.wait().ok();
+
             StepResult {
                 success: status.map(|s| s.success()).unwrap_or(false),
                 value: Value::None,
@@ -77,11 +99,11 @@ pub fn run_process(program: &str, args: &[String], mode: &ExecMode, ctx: &Contex
         ExecMode::StreamMatch(regex) => {
             let mut child = match cmd.stdout(Stdio::piped()).spawn() {
                 Ok(c) => c,
-                Err(_) => {
+                Err(e) => {
                     return StepResult {
                         success: false,
                         value: Value::None,
-                        error: None,
+                        error: Some(e.to_string()),
                     };
                 }
             };

@@ -117,14 +117,50 @@ fn placeholder_vars_work() {
 }
 
 #[test]
+fn placeholder_last_works() {
+    let exec = executor();
+
+    let steps = vec![
+        Step::Action {
+            action: Action::Transform(Transform::Regex {
+                input: Some("abc123".into()),
+                pattern: r"(\d+)".into(),
+                group: 1,
+            }),
+            assign_to: None,
+        },
+        Step::Action {
+            action: Action::Transform(Transform::Regex {
+                input: Some("{last}".into()),
+                pattern: r"(123)".into(),
+                group: 1,
+            }),
+            assign_to: Some("num".into()),
+        },
+    ];
+
+    let mut ctx = Context::new(vec![]);
+
+    let result = exec.run(&steps, &mut ctx);
+
+    assert!(result.success);
+
+    match ctx.vars.get("num") {
+        Some(Value::String(s)) => assert_eq!(s, "123"),
+        _ => panic!("{{last}} not working"),
+    }
+}
+
+#[test]
 fn process_capture_works() {
     let exec = executor();
 
     let steps = vec![Step::Action {
         action: Action::LaunchProcess {
-            program: "cmd".into(),
-            args: vec!["/C".into(), "echo hello".into()],
+            program: "echo".into(),
+            args: vec!["hello".into()],
             mode: ExecMode::Capture,
+            shell: true,
         },
         assign_to: None,
     }];
@@ -181,7 +217,7 @@ fn transform_uses_ctx_last_when_none() {
         },
         Step::Action {
             action: Action::Transform(Transform::Regex {
-                input: None, // ← key test
+                input: None,
                 pattern: r"(.+)\.rs".into(),
                 group: 1,
             }),
@@ -206,21 +242,15 @@ fn real_rg_pipeline() {
     let exec = executor();
 
     let steps = vec![
-        // Step 1: run ripgrep
         Step::Action {
             action: Action::LaunchProcess {
                 program: "rg".into(),
-                args: vec![
-                    "fn".into(), // search term
-                    ".".into(),
-                    "--max-count".into(),
-                    "100".into(),
-                ],
+                args: vec!["fn".into(), ".".into(), "--max-count".into(), "100".into()],
                 mode: ExecMode::Capture,
+                shell: false,
             },
             assign_to: None,
         },
-        // Step 2: extract file name (before colon)
         Step::Action {
             action: Action::Transform(Transform::Regex {
                 input: None,
@@ -231,9 +261,10 @@ fn real_rg_pipeline() {
         },
         Step::Action {
             action: Action::LaunchProcess {
-                program: "cmd".into(),
-                args: vec!["/C".into(), "code {var:file}".into()],
+                program: "code".into(),
+                args: vec!["{var:file}".into()],
                 mode: ExecMode::FireForget,
+                shell: true,
             },
             assign_to: None,
         },

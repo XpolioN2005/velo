@@ -7,6 +7,7 @@ pub enum Value {
     String(String),
     Bool(bool),
     Number(f64),
+    List(Vec<Value>),
 }
 
 pub struct Context {
@@ -68,6 +69,7 @@ pub enum Action {
         program: String,
         args: Vec<String>,
         mode: ExecMode,
+        shell: bool,
     },
     System(SystemActionId),
     Transform(Transform),
