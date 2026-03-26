@@ -15,11 +15,11 @@ pub fn run_transform(t: &Transform, ctx: &Context) -> StepResult {
 
             let re = match regex::Regex::new(pattern) {
                 Ok(r) => r,
-                Err(_) => {
+                Err(e) => {
                     return StepResult {
                         success: false,
                         value: Value::None,
-                        error: None,
+                        error: Some(e.to_string()),
                     };
                 }
             };
@@ -40,5 +40,48 @@ pub fn run_transform(t: &Transform, ctx: &Context) -> StepResult {
                 error: None,
             }
         }
+
+        // ── SPLIT ─────────────────────────
+        Transform::Split { input, delimiter } => {
+            let src = match input {
+                Some(s) => resolve::resolve_string(s, ctx),
+                None => value_to_string(&ctx.last),
+            };
+
+            let parts = src
+                .split(delimiter)
+                .map(|s| Value::String(s.to_string()))
+                .collect::<Vec<_>>();
+
+            StepResult {
+                success: true,
+                value: Value::List(parts),
+                error: None,
+            }
+        }
+
+        // ── FIRST ─────────────────────────
+        Transform::First { .. } => match &ctx.last {
+            Value::List(list) => {
+                if let Some(first) = list.first() {
+                    StepResult {
+                        success: true,
+                        value: first.clone(),
+                        error: None,
+                    }
+                } else {
+                    StepResult {
+                        success: false,
+                        value: Value::None,
+                        error: Some("Empty list".into()),
+                    }
+                }
+            }
+            _ => StepResult {
+                success: false,
+                value: Value::None,
+                error: Some("First expects list".into()),
+            },
+        },
     }
 }

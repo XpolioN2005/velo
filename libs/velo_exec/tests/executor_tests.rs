@@ -334,3 +334,57 @@ fn system_get_and_set_cwd() {
     assert!(result.success);
     assert!(ctx.cwd.is_some());
 }
+
+#[test]
+fn split_and_first_pipeline() {
+    let exec = executor();
+
+    let steps = vec![
+        // simulate rg output
+        Step::Action {
+            action: Action::Transform(Transform::Regex {
+                input: Some("src/main.rs:10\nsrc/lib.rs:20".into()),
+                pattern: r"(.+)".into(),
+                group: 1,
+            }),
+            assign_to: None,
+        },
+        // split lines
+        Step::Action {
+            action: Action::Transform(Transform::Split {
+                input: None,
+                delimiter: "\n".into(),
+            }),
+            assign_to: None,
+        },
+        // take first line
+        Step::Action {
+            action: Action::Transform(Transform::First { input: None }),
+            assign_to: None,
+        },
+        // split file:line
+        Step::Action {
+            action: Action::Transform(Transform::Split {
+                input: None,
+                delimiter: ":".into(),
+            }),
+            assign_to: None,
+        },
+        // take file only
+        Step::Action {
+            action: Action::Transform(Transform::First { input: None }),
+            assign_to: Some("file".into()),
+        },
+    ];
+
+    let mut ctx = Context::new(vec![]);
+
+    let result = exec.run(&steps, &mut ctx);
+
+    assert!(result.success);
+
+    match ctx.vars.get("file") {
+        Some(Value::String(s)) => assert_eq!(s, "src/main.rs"),
+        _ => panic!("Split/First pipeline failed"),
+    }
+}

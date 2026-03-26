@@ -1,4 +1,4 @@
-use super::{Executor, process, resolve, transform};
+use super::{Executor, process, transform};
 use crate::core::*;
 
 impl<H: SystemHandler> Executor<H> {

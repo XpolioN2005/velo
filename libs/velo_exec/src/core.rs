@@ -62,6 +62,13 @@ pub enum Transform {
         pattern: String,
         group: usize,
     },
+    Split {
+        input: Option<String>,
+        delimiter: String,
+    },
+    First {
+        input: Option<Vec<String>>,
+    },
 }
 
 pub enum Action {
