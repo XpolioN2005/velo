@@ -76,7 +76,10 @@ pub enum Action {
         program: String,
         args: Vec<String>,
         mode: ExecMode,
-        shell: bool,
+    },
+    Shell {
+        command: String,
+        mode: ExecMode,
     },
     OpenUrl {
         url: String,

@@ -1,4 +1,4 @@
-## Velo — Command Palette (Updated Architecture)
+# Velo — Command Palette (Updated Architecture)
 
 > Living doc. Reflects actual implementation.
 
@@ -36,12 +36,13 @@ Owns:
 
 ---
 
-### `platform` (NEW Layer)
+### `platform`
 
 - OS-specific behavior ONLY
 - Builds `Command`
-- Handles shell behavior
-- Handles URL opening semantics
+- Handles shell execution
+- Handles URL opening
+- Owns all OS quirks
 
 ---
 
@@ -68,11 +69,12 @@ Step
 
 ---
 
-# Action Model
+# Action Model (UPDATED)
 
 ```text
 Action
-├── LaunchProcess { program, args, mode, shell }
+├── LaunchProcess { program, args, mode }
+├── Shell { command, mode }
 ├── OpenUrl { url }
 ├── System(SystemActionId)
 ├── Transform(Transform)
@@ -117,7 +119,7 @@ ctx.last   → pipeline value
 ## Data Flow
 
 ```text
-ctx.last is updated after EVERY step
+ctx.last is updated after EVERY successful step
 ```
 
 ---
@@ -148,23 +150,11 @@ success = false → STOP execution
 error != None   → informational
 ```
 
-No branching or recovery yet.
+No branching or recovery.
 
 ---
 
-# Process Architecture (UPDATED)
-
-## Key Change
-
-```text
-OLD:
-Executor executed processes directly
-
-NEW:
-Executor → Platform → process.rs
-```
-
----
+# Process Architecture
 
 ## Responsibility Split
 
@@ -184,8 +174,24 @@ process.rs   → executes Command (OS-agnostic)
 program: String
 args: Vec<String>
 mode: ExecMode
-shell: bool
 ```
+
+- Direct execution
+- No shell
+- Strict argument handling
+
+---
+
+## Shell
+
+```text
+command: String
+mode: ExecMode
+```
+
+- Full shell execution
+- Supports pipes, redirects, chaining
+- Platform-controlled
 
 ---
 
@@ -200,18 +206,7 @@ StreamMatch(regex)
 
 ---
 
-## Shell Behavior (Now Platform-Controlled)
-
-```text
-shell = true  → handled inside Platform (e.g. cmd /C)
-shell = false → direct execution
-```
-
-Executor does NOT know how shell works anymore.
-
----
-
-# OpenUrl (UPDATED)
+# OpenUrl
 
 ```text
 Action::OpenUrl { url }
@@ -220,11 +215,11 @@ Action::OpenUrl { url }
 ## Behavior
 
 ```text
-Executor → Platform → build_command("start", ...)
+Executor → Platform → build_open_url()
 ```
 
 - Fully platform-controlled
-- No direct `cmd` usage in executor
+- No OS logic in executor
 
 ---
 
@@ -242,7 +237,7 @@ Handles:
 - stdout + stderr merging
 - streaming output
 - regex matching on stream
-- pipeline value preservation
+- pipeline value propagation
 
 ---
 
@@ -293,37 +288,55 @@ Value
 
 ---
 
-# YAML Mapping (IN PROGRESS)
+# YAML Mapping (UPDATED)
 
 ```yaml
 commands:
   - name: Search Code
     steps:
-      - run:
-          program: rg
-          args: ["{0}"]
+      - action:
+          type: process
+          program: "rg"
+          args: ["{var:query}", "{var:path}", "--max-count", "100"]
           mode: capture
 
-      - transform:
-          type: split
+      - action:
+          type: transform
+          transform: split
           delimiter: "\n"
 
-      - transform:
-          type: first
+      - action:
+          type: transform
+          transform: first
 
-      - transform:
-          type: split
+      - action:
+          type: transform
+          transform: split
           delimiter: ":"
 
-      - transform:
-          type: first
-          assign_to: file
+      - action:
+          type: transform
+          transform: first
+        assign_to: "file"
 
-      - run:
-          program: code
+      - action:
+          type: process
+          program: "code"
           args: ["{var:file}"]
           mode: fire_forget
-          shell: true
+```
+
+---
+
+# Alternative: Shell Command
+
+For complex commands:
+
+```yaml
+- action:
+    type: shell
+    command: "rg {var:query} {var:path} --max-count 100 | head -n 1"
+    mode: capture
 ```
 
 ---
@@ -334,7 +347,7 @@ commands:
 YAML → Vec<Step>
 ```
 
-No nested execution structures.
+No nesting, no control flow.
 
 ---
 
@@ -345,6 +358,7 @@ Action::Sequence ❌
 Action::Parallel ❌
 wait flag ❌
 stop_on_fail ❌
+shell: bool ❌
 ```
 
 ---
@@ -355,7 +369,7 @@ stop_on_fail ❌
 All placeholders SHOULD be resolved before execution
 ```
 
-Executor still supports fallback resolution (temporary).
+Executor still supports fallback resolution.
 
 ---
 
@@ -364,7 +378,8 @@ Executor still supports fallback resolution (temporary).
 ```text
 ✔ Sequential pipelines
 ✔ Shared context (vars, args, cwd, last)
-✔ Process execution (direct + shell)
+✔ Direct process execution
+✔ Shell execution (explicit)
 ✔ Platform abstraction (Windows implemented)
 ✔ Regex / Split / First transforms
 ✔ Variable assignment
@@ -396,30 +411,29 @@ Operating System
 ```text
 UI: Stable
 Executor: Complete
-Platform Layer: Implemented (Windows)
+Platform Layer: Clean (Windows implemented)
 Process Engine: Stable
 Integration: In progress
 ```
 
 ---
 
-# Known Design Issues
+# Known Design Issues (UPDATED)
 
-## 1. `shell: bool`
+## 1. Argument Ergonomics
 
 ```text
 Problem:
-- weak abstraction
-- platform-dependent meaning
-- limits extensibility
+- Vec<String> is strict but not user-friendly
+- YAML authoring feels verbose
 ```
 
-### Planned Fix
+### Direction
 
 ```text
-Replace with:
-ExecMode::Shell
-ExecMode::Direct
+Potential:
+- shell-first commands
+- or string → args parser layer
 ```
 
 ---
@@ -436,7 +450,7 @@ Planned:
 
 ---
 
-## Direction
+# Direction
 
 ```text
 From:

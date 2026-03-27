@@ -8,11 +8,14 @@ impl<H: SystemHandler, P: Platform> Executor<H, P> {
                 Step::Action { action, assign_to } => {
                     let result = self.run_action(action, ctx);
 
-                    if let Some(var) = assign_to {
-                        ctx.vars.insert(var.clone(), result.value.clone());
+                    // only assign on success
+                    if result.success {
+                        if let Some(var) = assign_to {
+                            ctx.vars.insert(var.clone(), result.value.clone());
+                        }
+                        ctx.last = result.value.clone();
                     }
 
-                    ctx.last = result.value.clone();
                     result
                 }
             };
@@ -35,7 +38,6 @@ impl<H: SystemHandler, P: Platform> Executor<H, P> {
                 program,
                 args,
                 mode,
-                shell,
             } => {
                 let program = resolve::resolve_string(program, ctx);
 
@@ -44,7 +46,15 @@ impl<H: SystemHandler, P: Platform> Executor<H, P> {
                     .map(|a| resolve::resolve_string(a, ctx))
                     .collect();
 
-                let cmd = self.platform.build_command(&program, &args, *shell, ctx);
+                let cmd = self.platform.build_command(&program, &args, ctx);
+
+                process::run_process(cmd, mode, ctx)
+            }
+
+            Action::Shell { command, mode } => {
+                let command = resolve::resolve_string(command, ctx);
+
+                let cmd = self.platform.build_shell_command(&command, ctx);
 
                 process::run_process(cmd, mode, ctx)
             }
@@ -52,15 +62,12 @@ impl<H: SystemHandler, P: Platform> Executor<H, P> {
             Action::OpenUrl { url } => {
                 let url = resolve::resolve_string(url, ctx);
 
-                let cmd = self
-                    .platform
-                    .build_command("start", &vec!["".into(), url], true, ctx);
+                let cmd = self.platform.build_open_url(&url, ctx);
 
                 process::run_process(cmd, &ExecMode::FireForget, ctx)
             }
 
             Action::System(id) => self.system.run(*id, ctx),
-
             Action::Transform(t) => transform::run_transform(t, ctx),
         }
     }

@@ -1,6 +1,6 @@
-## Velo — Build Log (Updated, Post Platform Refactor)
+# Velo — Build Log (Updated, Post Platform Refactor)
 
-> Reflects current **actual architecture after executor + platform split**
+> Reflects actual architecture after executor + platform cleanup
 
 ---
 
@@ -21,6 +21,8 @@
 
 # Phase 1 — Execution Engine (velo_exec)
 
+---
+
 ## Step 8 — Core Engine ✅
 
 - Step-based execution model
@@ -35,22 +37,18 @@
 
 ## Step 8.1 — Process Execution (Refactored) ✅
 
-### Major Change
+### Final Model
 
 ```text
-OLD:
-Executor handled process execution directly
-
-NEW:
-Executor → Platform → process runner
+Executor → Platform → process.rs
 ```
 
-### Final Split
+### Responsibility Split
 
 ```text
+Executor     → orchestration
 Platform     → builds Command (OS-specific)
 process.rs   → executes Command (OS-agnostic)
-Executor     → orchestrates pipeline
 ```
 
 ---
@@ -62,15 +60,13 @@ Executor     → orchestrates pipeline
 - Stream
 - StreamMatch
 
-All preserved after refactor.
-
 ---
 
 ## Step 8.2 — Pipeline System ✅
 
 - Step chaining via `ctx.last`
 - Implicit input when `input = None`
-- Stable sequential execution
+- Sequential execution
 - Early exit on failure
 
 ---
@@ -79,7 +75,7 @@ All preserved after refactor.
 
 - `ctx.vars`
 - `{var:name}` resolution
-- assignment via `assign_to`
+- Assignment via `assign_to`
 
 ---
 
@@ -96,28 +92,28 @@ All preserved after refactor.
 - Regex
 - Split
 - First
-- ctx.last fallback
+- `ctx.last` fallback
 
 ---
 
-## Step 8.6 — OpenUrl (Refactored) ✅
+## Step 8.6 — OpenUrl (FIXED) ✅
+
+### Final Behavior
 
 ```text
-OLD:
-cmd /C start inside executor
-
-NEW:
-Executor → Platform → build_command("start", ...)
+Executor → Platform → build_open_url()
 ```
 
-Now fully platform-controlled.
+- No `"start"` in executor
+- Fully platform-controlled
+- Clean abstraction boundary
 
 ---
 
 ## Step 8.7 — Error Handling ✅
 
 - `StepResult`
-- success flag
+- `success` flag
 - error propagation
 - pipeline stops on failure
 
@@ -135,23 +131,28 @@ Covers:
 - Split + First pipelines
 - OpenUrl
 
+### Note
+
+- Shell-specific commands (e.g. `echo`) now require `Action::Shell`
+- Tests updated accordingly
+
 ---
 
-# Phase 1.5 — Platform Abstraction (NEW) ✅
+# Phase 1.5 — Platform Abstraction (FINAL) ✅
 
-## Problem (Solved)
+---
+
+## Problem (Resolved)
 
 ```text
 - cmd /C hardcoded
-- Windows-only logic inside executor
-- poor portability
+- OS logic inside executor
+- mixed execution models
 ```
 
 ---
 
-## Solution
-
-### Platform Layer Introduced
+## Final Solution
 
 ```text
 Executor → Platform → process.rs
@@ -169,7 +170,18 @@ pub trait Platform {
         &self,
         program: &str,
         args: &[String],
-        shell: bool,
+        ctx: &Context,
+    ) -> Command;
+
+    fn build_shell_command(
+        &self,
+        command: &str,
+        ctx: &Context,
+    ) -> Command;
+
+    fn build_open_url(
+        &self,
+        url: &str,
         ctx: &Context,
     ) -> Command;
 }
@@ -181,27 +193,26 @@ pub trait Platform {
 
 Handles:
 
-- `cmd /C` wrapping
-- `start` for URLs
-- working directory
-- shell vs direct execution
+- Direct process execution (`Command::new`)
+- Shell execution (`cmd /C`)
+- URL opening (`start "" <url>`)
+- Working directory handling
 
 ---
 
 ## Result
 
 ```text
-✔ Executor is now OS-agnostic
+✔ Executor is fully OS-agnostic
 ✔ No cmd /C in core
-✔ No process spawning in executor
-✔ Clean boundary established
+✔ No shell branching in executor
+✔ No shell flag
+✔ Clean execution model separation
 ```
 
 ---
 
 ## process.rs (Final Role) ✅
-
-Now acts as:
 
 ```text
 Pure execution engine
@@ -212,11 +223,13 @@ Handles:
 - spawn / output / streaming
 - stdout + stderr merging
 - regex stream matching
-- pipeline value preservation
+- pipeline value propagation
 
 ---
 
 # Phase 2 — Integration (Current Focus)
+
+---
 
 ## Step 9 — UI ↔ Executor Integration 🔄
 
@@ -233,7 +246,7 @@ Handles:
 ## Step 9.1 — Command Mapping 🔄
 
 - [ ] Convert YAML into pipeline steps
-- [ ] Support transforms in config
+- [ ] Support transforms
 - [ ] Support variable assignment
 
 ---
@@ -242,7 +255,7 @@ Handles:
 
 - [ ] Capture user input
 - [ ] Feed into `Context`
-- [ ] Ensure correct placeholder resolution
+- [ ] Ensure placeholder resolution
 
 ---
 
@@ -250,14 +263,14 @@ Handles:
 
 - [ ] Remove legacy execution system
 - [ ] Enforce strict UI / executor separation
-- [ ] Validate real-world workflows:
+- [ ] Validate real workflows:
   - search → open file
   - CLI pipelines
   - URL handling
 
 ---
 
-# Current Architecture (IMPORTANT)
+# Current Architecture (FINAL)
 
 ```text
 UI Layer
@@ -277,38 +290,38 @@ Operating System
 
 ```text
 UI: Stable
-Executor: Complete (pipeline + platform-aware)
-Platform Layer: Implemented (Windows)
+Executor: Complete
+Platform Layer: Clean (Windows implemented)
 Process Engine: Stable
 Integration: In progress
 ```
 
 ---
 
-# Known Design Debt
+# Known Design Debt (UPDATED)
 
-## 1. `shell: bool`
+---
+
+## 1. Argument Ergonomics
 
 ```text
 Problem:
-- weak abstraction
-- not expressive
-- platform-dependent behavior hidden
+- Vec<String> is strict
+- YAML authoring is verbose
 ```
 
-### Planned Fix
+### Direction
 
 ```text
-Replace with:
-ExecMode::Shell
-ExecMode::Direct
+- Optional string → args parser layer
+- Shell-first commands for UX
 ```
 
 ---
 
 ## 2. Limited Transform Set
 
-Planned additions:
+Planned:
 
 - Replace
 - Trim
@@ -316,15 +329,14 @@ Planned additions:
 
 ---
 
-## Direction
+# Direction
 
 ```text
 From:
-    Windows-bound command launcher
+    Windows command launcher
 
 To:
     cross-platform pipeline execution engine
-    with clean OS abstraction
+    with strict execution semantics
+    and clean OS abstraction
 ```
-
----

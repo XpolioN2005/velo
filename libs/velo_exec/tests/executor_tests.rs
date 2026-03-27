@@ -155,11 +155,9 @@ fn process_capture_works() {
     let exec = executor();
 
     let steps = vec![Step::Action {
-        action: Action::LaunchProcess {
-            program: "echo".into(),
-            args: vec!["hello".into()],
+        action: Action::Shell {
+            command: "echo hello".into(),
             mode: ExecMode::Capture,
-            shell: true,
         },
         assign_to: None,
     }];
@@ -243,7 +241,6 @@ fn real_rg_pipeline() {
                 program: "rg".into(),
                 args: vec!["fn".into(), ".".into(), "--max-count".into(), "100".into()],
                 mode: ExecMode::Capture,
-                shell: false,
             },
             assign_to: None,
         },
@@ -256,11 +253,9 @@ fn real_rg_pipeline() {
             assign_to: Some("file".into()),
         },
         Step::Action {
-            action: Action::LaunchProcess {
-                program: "code".into(),
-                args: vec!["{var:file}".into()],
+            action: Action::Shell {
+                command: "code {var:file}".into(),
                 mode: ExecMode::FireForget,
-                shell: true,
             },
             assign_to: None,
         },
