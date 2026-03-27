@@ -1,291 +1,275 @@
-# Velo — Build Log (Updated)
+## Velo — Build Log (Updated, Post Platform Refactor)
 
-> Internal development log
-> Reflects current real architecture and progress
-
----
-
-## Phase 0 — Foundation
-
-### Step 1 — Win32 Window + Message Loop ✅
-
-- Window creation (`CreateWindowExW`)
-- Message loop (`GetMessageW`)
-- Hidden-on-close behavior
-- Correct window styles:
-  - `WS_POPUP`
-  - `WS_EX_TOOLWINDOW`
-  - `WS_EX_TOPMOST`
+> Reflects current **actual architecture after executor + platform split**
 
 ---
 
-### Step 2 — Direct2D Setup ✅
+# Phase 0 — Foundation (Unchanged)
 
-- D2D factory created
-- HWND render target initialized
-- Clear background rendering
-- Renderer stored in window state
+### Win32 + Rendering Stack ✅
 
----
-
-### Step 3 — DirectWrite Text ✅
-
-- Text rendering pipeline
-- Query text + placeholder
-- Text alignment + formatting
-- ClearType enabled
+- Win32 window + message loop
+- Direct2D renderer
+- DirectWrite text system
+- Input handling (keyboard + focus)
+- Command palette UI
+- Fuzzy search + ranking
+- Global hotkey system
+- Window persistence + config
 
 ---
 
-### Step 4 — Input Handling ✅
+# Phase 1 — Execution Engine (velo_exec)
 
-- `WM_CHAR` text input
+## Step 8 — Core Engine ✅
 
-- `WM_KEYDOWN` controls:
-  - Backspace
-  - Escape
-  - Enter
-  - Arrow navigation
-
-- Focus handling:
-  - `WM_SETFOCUS`
-  - `WM_KILLFOCUS`
+- Step-based execution model
+- Sequential pipeline execution
+- Context system:
+  - `ctx.args`
+  - `ctx.vars`
+  - `ctx.last`
+  - `ctx.cwd`
 
 ---
 
-### Step 5 — Command System (Initial) ✅
+## Step 8.1 — Process Execution (Refactored) ✅
 
-- Built-in commands
-- User commands via YAML
-- Result rendering
-- Selection + highlighting
-- Dynamic window sizing
-
----
-
-### Step 5.5 — Execution (Legacy) ✅
-
-- `app/executor.rs`
-- Basic process launch
-- URL opening
-- Internal actions
-- Early compound support
-
----
-
-### Step 6 — Fuzzy Search ✅
-
-- Scoring system
-- Alias boost
-- Match highlighting
-- Sorted results
-
----
-
-### Step 7 — Hotkey + Visibility ✅
-
-- Global hotkey (`Ctrl + Alt + P`)
-- Show / hide behavior
-- DPI awareness
-- Renderer lifecycle optimization
-
----
-
-### Step 7.2 — Title Bar + Drag + Config ✅
-
-- Custom title bar
-- Native drag via `HTCAPTION`
-- Window position persistence
-- YAML config system
-
----
-
-# Pivot — Execution Rewrite
-
-### Problem
+### Major Change
 
 ```text
-Execution layer was tightly coupled to UI
-Hard to extend
-Control flow unclear
-Not scalable
+OLD:
+Executor handled process execution directly
+
+NEW:
+Executor → Platform → process runner
+```
+
+### Final Split
+
+```text
+Platform     → builds Command (OS-specific)
+process.rs   → executes Command (OS-agnostic)
+Executor     → orchestrates pipeline
 ```
 
 ---
 
-### Decision
+### Execution Modes ✅
+
+- FireForget
+- Capture
+- Stream
+- StreamMatch
+
+All preserved after refactor.
+
+---
+
+## Step 8.2 — Pipeline System ✅
+
+- Step chaining via `ctx.last`
+- Implicit input when `input = None`
+- Stable sequential execution
+- Early exit on failure
+
+---
+
+## Step 8.3 — Variable System ✅
+
+- `ctx.vars`
+- `{var:name}` resolution
+- assignment via `assign_to`
+
+---
+
+## Step 8.4 — Placeholder System ✅
+
+- `{0}`, `{1}` → args
+- `{var:name}` → variables
+- `{last}` → pipeline chaining
+
+---
+
+## Step 8.5 — Transform Engine ✅
+
+- Regex
+- Split
+- First
+- ctx.last fallback
+
+---
+
+## Step 8.6 — OpenUrl (Refactored) ✅
 
 ```text
-Extract execution into separate crate: velo_exec
+OLD:
+cmd /C start inside executor
+
+NEW:
+Executor → Platform → build_command("start", ...)
+```
+
+Now fully platform-controlled.
+
+---
+
+## Step 8.7 — Error Handling ✅
+
+- `StepResult`
+- success flag
+- error propagation
+- pipeline stops on failure
+
+---
+
+## Step 8.8 — Testing ✅
+
+Covers:
+
+- Regex transforms
+- Variables + placeholders
+- ctx.last chaining
+- Process execution (capture/stream)
+- Real `rg` pipeline
+- Split + First pipelines
+- OpenUrl
+
+---
+
+# Phase 1.5 — Platform Abstraction (NEW) ✅
+
+## Problem (Solved)
+
+```text
+- cmd /C hardcoded
+- Windows-only logic inside executor
+- poor portability
 ```
 
 ---
 
-### Outcome
+## Solution
+
+### Platform Layer Introduced
 
 ```text
-Execution is now:
-- decoupled
-- pipeline-based
-- context-driven
+Executor → Platform → process.rs
 ```
 
 ---
 
-# Phase 1 — New Execution Engine
+## Platform Design
 
-### Step 8 — velo_exec (Core Engine) ✅
+### Trait
 
-- [x] Created `libs/velo_exec`
-- [x] Workspace integration
-- [x] Defined Step-based execution model
-- [x] Implemented Context system
-- [x] Implemented sequential executor
-
----
-
-### Step 8.1 — Process Execution ✅
-
-- [x] Direct process execution
-- [x] Shell execution (`cmd /C`)
-- [x] Working directory support (`cwd`)
-- [x] Modes:
-  - FireForget
-  - Capture
-  - Stream
-  - StreamMatch
+```rust
+pub trait Platform {
+    fn build_command(
+        &self,
+        program: &str,
+        args: &[String],
+        shell: bool,
+        ctx: &Context,
+    ) -> Command;
+}
+```
 
 ---
 
-### Step 8.2 — Pipeline System ✅
+## WindowsPlatform ✅
 
-- [x] `ctx.last` chaining
-- [x] Step-to-step data flow
-- [x] Implicit input via `None`
-- [x] Stable sequential execution
+Handles:
 
----
-
-### Step 8.3 — Variable System ✅
-
-- [x] `ctx.vars`
-- [x] `{var:name}` resolution
-- [x] assignment via `assign_to`
-- [x] reusable pipeline values
+- `cmd /C` wrapping
+- `start` for URLs
+- working directory
+- shell vs direct execution
 
 ---
 
-### Step 8.4 — Placeholder System ✅
+## Result
 
-- [x] `{0}`, `{1}` args
-- [x] `{var:name}`
-- [x] `{last}`
-- [x] integrated into resolver
-
----
-
-### Step 8.5 — Transform Engine ✅
-
-- [x] Regex transform
-- [x] Split transform
-- [x] First transform
-- [x] ctx.last fallback behavior
+```text
+✔ Executor is now OS-agnostic
+✔ No cmd /C in core
+✔ No process spawning in executor
+✔ Clean boundary established
+```
 
 ---
 
-### Step 8.6 — OpenUrl Action ✅
+## process.rs (Final Role) ✅
 
-- [x] Added `Action::OpenUrl`
-- [x] Uses `cmd /C start "" <url>`
-- [x] Works with system default browser
+Now acts as:
 
----
+```text
+Pure execution engine
+```
 
-### Step 8.7 — Error Handling ✅
+Handles:
 
-- [x] `StepResult`
-- [x] success flag
-- [x] optional error message
-- [x] failure stops execution
-
----
-
-### Step 8.8 — Testing ✅
-
-- [x] Unit tests for:
-  - Regex
-  - Variables
-  - Args
-  - ctx.last chaining
-  - Process execution
-  - Real `rg` pipeline
-  - Split + First pipeline
-  - OpenUrl
+- spawn / output / streaming
+- stdout + stderr merging
+- regex stream matching
+- pipeline value preservation
 
 ---
 
 # Phase 2 — Integration (Current Focus)
 
-### Step 9 — UI ↔ Executor Integration 🔄
+## Step 9 — UI ↔ Executor Integration 🔄
 
-- [ ] Replace old executor completely
+### In Progress
+
+- [ ] Replace legacy executor fully
 - [ ] Map YAML → `Vec<Step>`
-- [ ] Feed args into `Context`
-- [ ] Trigger `Executor::run`
+- [ ] Inject args into `ctx.args`
+- [ ] Execute via `Executor::run`
 - [ ] Handle `StepResult` in UI
 
 ---
 
-### Step 9.1 — Command Mapping Rewrite 🔄
+## Step 9.1 — Command Mapping 🔄
 
-- [ ] Replace Action-based mapping
-- [ ] Build Step pipelines from YAML
+- [ ] Convert YAML into pipeline steps
 - [ ] Support transforms in config
+- [ ] Support variable assignment
 
 ---
 
-### Step 9.2 — ArgInput Integration 🔄
+## Step 9.2 — ArgInput 🔄
 
-- [ ] Collect user input
-- [ ] Inject into `ctx.args`
-- [ ] Ensure full resolution before execution
+- [ ] Capture user input
+- [ ] Feed into `Context`
+- [ ] Ensure correct placeholder resolution
 
 ---
 
 # Phase 3 — Stabilization
 
-- [ ] Remove all legacy execution code
-- [ ] Ensure strict separation (UI vs executor)
-- [ ] Validate real-world commands:
+- [ ] Remove legacy execution system
+- [ ] Enforce strict UI / executor separation
+- [ ] Validate real-world workflows:
   - search → open file
-  - url → browser
-  - cli tools
+  - CLI pipelines
+  - URL handling
 
 ---
 
-# Future Work
+# Current Architecture (IMPORTANT)
 
-## Execution Improvements
-
-- [ ] Add more transforms:
-  - Replace
-  - Trim
-  - JSON parse
-
-- [ ] Improve error visibility
-
-- [ ] Logging system
-
----
-
-## Devlogs (Deferred)
-
-Will include:
-
-- Execution architecture evolution
-- Pipeline design decisions
-- Mistakes and rewrites
-- Performance tuning
+```text
+UI Layer
+    ↓
+Executor (pipeline engine)
+    ↓
+Platform (OS abstraction)
+    ↓
+process.rs (execution engine)
+    ↓
+Operating System
+```
 
 ---
 
@@ -293,19 +277,54 @@ Will include:
 
 ```text
 UI: Stable
-Execution Engine: Working (pipeline-based)
+Executor: Complete (pipeline + platform-aware)
+Platform Layer: Implemented (Windows)
+Process Engine: Stable
 Integration: In progress
 ```
 
 ---
 
-# Direction
+# Known Design Debt
+
+## 1. `shell: bool`
+
+```text
+Problem:
+- weak abstraction
+- not expressive
+- platform-dependent behavior hidden
+```
+
+### Planned Fix
+
+```text
+Replace with:
+ExecMode::Shell
+ExecMode::Direct
+```
+
+---
+
+## 2. Limited Transform Set
+
+Planned additions:
+
+- Replace
+- Trim
+- JSON parsing
+
+---
+
+## Direction
 
 ```text
 From:
-    UI-driven execution
+    Windows-bound command launcher
 
 To:
-    pipeline-based execution engine
-    with clean separation
+    cross-platform pipeline execution engine
+    with clean OS abstraction
 ```
+
+---

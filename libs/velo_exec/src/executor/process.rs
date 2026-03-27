@@ -1,44 +1,19 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
-use super::resolve;
 use crate::core::*;
 
-pub fn run_process(
-    program: &str,
-    args: &[String],
-    mode: &ExecMode,
-    shell: bool,
-    ctx: &Context,
-) -> StepResult {
-    let program = resolve::resolve_string(program, ctx);
-    let args = resolve::resolve_args(args, ctx);
-
-    let mut cmd = if shell {
-        let full = format!("{} {}", program, args.join(" "));
-        let mut c = Command::new("cmd");
-        c.args(["/C", &full]);
-        c
-    } else {
-        let mut c = Command::new(program);
-        c.args(args);
-        c
-    };
-
-    if let Some(cwd) = &ctx.cwd {
-        cmd.current_dir(cwd);
-    }
-
+pub fn run_process(mut cmd: Command, mode: &ExecMode, ctx: &Context) -> StepResult {
     match mode {
         ExecMode::FireForget => match cmd.spawn() {
             Ok(_) => StepResult {
                 success: true,
-                value: ctx.last.clone(), // preserve pipeline
+                value: ctx.last.clone(),
                 error: None,
             },
             Err(e) => StepResult {
                 success: false,
-                value: ctx.last.clone(), // do NOT break pipeline value
+                value: ctx.last.clone(),
                 error: Some(e.to_string()),
             },
         },
@@ -49,7 +24,7 @@ pub fn run_process(
 
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 if !stderr.trim().is_empty() {
-                    output.push_str("\n");
+                    output.push('\n');
                     output.push_str(&stderr);
                 }
 
@@ -81,10 +56,8 @@ pub fn run_process(
             let stdout = child.stdout.take().unwrap();
             let reader = BufReader::new(stdout);
 
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    println!("{}", line);
-                }
+            for line in reader.lines().flatten() {
+                println!("{}", line);
             }
 
             let status = child.wait().ok();
@@ -111,16 +84,14 @@ pub fn run_process(
             let stdout = child.stdout.take().unwrap();
             let reader = BufReader::new(stdout);
 
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    if let Some(caps) = regex.captures(&line) {
-                        if let Some(m) = caps.get(1) {
-                            return StepResult {
-                                success: true,
-                                value: Value::String(m.as_str().to_string()),
-                                error: None,
-                            };
-                        }
+            for line in reader.lines().flatten() {
+                if let Some(caps) = regex.captures(&line) {
+                    if let Some(m) = caps.get(1) {
+                        return StepResult {
+                            success: true,
+                            value: Value::String(m.as_str().to_string()),
+                            error: None,
+                        };
                     }
                 }
             }

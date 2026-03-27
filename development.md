@@ -1,45 +1,62 @@
-# Velo — Command Palette for Windows
+## Velo — Command Palette (Updated Architecture)
 
 > Living doc. Reflects actual implementation.
 
 ---
 
-## Execution Architecture
+# Execution Architecture
 
-### Core Principle
+## Core Principle
 
 ```text
-UI builds Steps → velo_exec executes → UI reacts
+UI builds Steps → Executor → Platform → Process Engine → OS
 ```
 
 ---
 
-### Strict Boundaries
+## Strict Boundaries
 
-#### `velo_exec`
+### `velo_exec` (Execution Engine)
 
-- Pure logic only
+- Pure logic
 - No Win32
+- No UI
 - No renderer
-- No AppState
-- No UI decisions
-- Owns:
-  - execution pipeline
-  - context
-  - transforms
-  - process handling
+- No app state
 
-#### UI (`velo`)
+Owns:
 
-- Builds `Vec<Step>`
-- Resolves all `{}` placeholders
-- Provides `Context.args`
-- Handles Internal actions
-- Reacts to execution result
+```text
+✔ pipeline execution
+✔ context system
+✔ transforms
+✔ process orchestration
+✔ platform abstraction boundary
+```
 
 ---
 
-## Execution Model
+### `platform` (NEW Layer)
+
+- OS-specific behavior ONLY
+- Builds `Command`
+- Handles shell behavior
+- Handles URL opening semantics
+
+---
+
+### UI (`velo`)
+
+- Builds `Vec<Step>`
+- Supplies `Context.args`
+- Handles user interaction
+- Renders results
+- Triggers execution
+- Reacts to `StepResult`
+
+---
+
+# Execution Model
 
 ```text
 Command = Vec<Step>
@@ -51,7 +68,7 @@ Step
 
 ---
 
-## Action Model (velo_exec)
+# Action Model
 
 ```text
 Action
@@ -63,7 +80,7 @@ Action
 
 ---
 
-## Transform
+# Transform System
 
 ```text
 Transform
@@ -74,47 +91,47 @@ Transform
 
 ---
 
-## Execution Flow
+# Execution Flow
 
 ```text
 Step 1 → result → ctx.last
-Step 2 → uses ctx.last (if input=None)
+Step 2 → uses ctx.last if input=None
 Step N → continues chain
 ```
 
 ---
 
-## Context
+# Context
 
 ```text
-ctx.args   → user input (from UI)
-ctx.vars   → assigned variables
+ctx.args   → user input
+ctx.vars   → variables
 ctx.cwd    → working directory
 ctx.last   → pipeline value
 ```
 
 ---
 
-## Pipeline Rules
+# Pipeline Rules
 
-### Data Flow
+## Data Flow
 
 ```text
-ctx.last is ALWAYS updated after each step
+ctx.last is updated after EVERY step
 ```
 
 ---
 
-### Input Resolution
+## Input Resolution
 
 ```text
-input = Some(...) → resolved string
+input = Some(...) → resolved
 input = None      → ctx.last
 ```
 
 ---
 
-### Placeholders (executor-level)
+## Placeholders
 
 ```text
 {0}, {1}        → args
@@ -124,30 +141,55 @@ input = None      → ctx.last
 
 ---
 
-## Execution Semantics (CURRENT)
+# Execution Semantics
 
 ```text
 success = false → STOP execution
 error != None   → informational
 ```
 
-No `critical`, no branching yet.
+No branching or recovery yet.
 
 ---
 
-## Process Execution
+# Process Architecture (UPDATED)
+
+## Key Change
 
 ```text
-LaunchProcess
-├── program: String
-├── args: Vec<String>
-├── mode: ExecMode
-├── shell: bool
+OLD:
+Executor executed processes directly
+
+NEW:
+Executor → Platform → process.rs
 ```
 
 ---
 
-### ExecMode
+## Responsibility Split
+
+```text
+Executor     → orchestration
+Platform     → builds Command (OS-specific)
+process.rs   → executes Command (OS-agnostic)
+```
+
+---
+
+# Process Execution
+
+## LaunchProcess
+
+```text
+program: String
+args: Vec<String>
+mode: ExecMode
+shell: bool
+```
+
+---
+
+## ExecMode
 
 ```text
 FireForget
@@ -158,33 +200,53 @@ StreamMatch(regex)
 
 ---
 
-### Shell Mode (Windows)
+## Shell Behavior (Now Platform-Controlled)
 
 ```text
-shell = true  → cmd /C ...
+shell = true  → handled inside Platform (e.g. cmd /C)
 shell = false → direct execution
 ```
 
+Executor does NOT know how shell works anymore.
+
 ---
 
-## OpenUrl
+# OpenUrl (UPDATED)
 
 ```text
 Action::OpenUrl { url }
 ```
 
-### Behavior
+## Behavior
 
 ```text
-cmd /C start "" <url>
+Executor → Platform → build_command("start", ...)
 ```
 
-- Uses default browser
-- Uses shell internally
+- Fully platform-controlled
+- No direct `cmd` usage in executor
 
 ---
 
-## Example Pipeline (REAL)
+# Process Engine (`process.rs`)
+
+## Role
+
+```text
+Pure execution engine
+```
+
+Handles:
+
+- spawn / output
+- stdout + stderr merging
+- streaming output
+- regex matching on stream
+- pipeline value preservation
+
+---
+
+# Example Pipeline (REAL)
 
 ```text
 rg fn
@@ -200,7 +262,7 @@ rg fn
 
 ---
 
-## Execution API (Actual)
+# Execution API
 
 ```rust
 Executor::run(&steps, &mut ctx) -> StepResult
@@ -208,7 +270,7 @@ Executor::run(&steps, &mut ctx) -> StepResult
 
 ---
 
-### StepResult
+# StepResult
 
 ```text
 success: bool
@@ -218,7 +280,7 @@ error: Option<String>
 
 ---
 
-## Value Model
+# Value Model
 
 ```text
 Value
@@ -231,7 +293,7 @@ Value
 
 ---
 
-## YAML Mapping (WORK IN PROGRESS)
+# YAML Mapping (IN PROGRESS)
 
 ```yaml
 commands:
@@ -266,17 +328,17 @@ commands:
 
 ---
 
-## Command Mapping
+# Command Mapping
 
 ```text
 YAML → Vec<Step>
 ```
 
-NOT `Action::Sequence` anymore.
+No nested execution structures.
 
 ---
 
-## Removed Architecture (OBSOLETE)
+# Removed Architecture
 
 ```text
 Action::Sequence ❌
@@ -287,47 +349,99 @@ stop_on_fail ❌
 
 ---
 
-## Input Rule (IMPORTANT)
+# Input Rule
 
 ```text
-All {0}, {var}, etc. resolved BEFORE execution
+All placeholders SHOULD be resolved before execution
 ```
 
-Executor should ideally only see final values
-(but currently still supports resolution)
+Executor still supports fallback resolution (temporary).
 
 ---
 
-## Current System Capabilities
+# Current Capabilities
 
 ```text
-✔ Sequential execution
+✔ Sequential pipelines
 ✔ Shared context (vars, args, cwd, last)
-✔ Process execution (shell + direct)
-✔ Regex transform
-✔ Split + First transforms
+✔ Process execution (direct + shell)
+✔ Platform abstraction (Windows implemented)
+✔ Regex / Split / First transforms
 ✔ Variable assignment
-✔ OpenUrl support
-✔ Real pipelines working (rg → parse → use)
+✔ OpenUrl via platform
+✔ Real pipelines (rg → parse → open)
+✔ Streaming + regex matching
 ```
 
 ---
 
-## Current Position
+# Current Architecture
 
 ```text
-velo = UI layer
-velo_exec = execution engine
+UI (velo)
+    ↓
+Executor (pipeline engine)
+    ↓
+Platform (OS abstraction)
+    ↓
+process.rs (execution engine)
+    ↓
+Operating System
 ```
 
 ---
 
-## Next Direction
+# Current Status
 
 ```text
-1. Improve YAML → Step mapping
-2. Add transforms (replace, trim)
-3. Improve logging/debugging
-4. Integrate cleanly with UI
-5. THEN refine execution behavior (critical, etc.)
+UI: Stable
+Executor: Complete
+Platform Layer: Implemented (Windows)
+Process Engine: Stable
+Integration: In progress
+```
+
+---
+
+# Known Design Issues
+
+## 1. `shell: bool`
+
+```text
+Problem:
+- weak abstraction
+- platform-dependent meaning
+- limits extensibility
+```
+
+### Planned Fix
+
+```text
+Replace with:
+ExecMode::Shell
+ExecMode::Direct
+```
+
+---
+
+## 2. Limited Transform Set
+
+Planned:
+
+```text
+- Replace
+- Trim
+- JSON parsing
+```
+
+---
+
+## Direction
+
+```text
+From:
+    Windows command palette
+
+To:
+    cross-platform execution pipeline engine
 ```

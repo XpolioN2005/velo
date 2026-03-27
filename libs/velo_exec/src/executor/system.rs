@@ -24,11 +24,19 @@ impl SystemHandler for DefaultSystem {
             SystemActionId::SetCwd => match &ctx.last {
                 Value::String(path) => {
                     let pb = PathBuf::from(path);
-                    ctx.cwd = Some(pb);
-                    StepResult {
-                        success: true,
-                        value: Value::None,
-                        error: None,
+                    if pb.exists() {
+                        ctx.cwd = Some(pb);
+                        StepResult {
+                            success: true,
+                            value: Value::None,
+                            error: None,
+                        }
+                    } else {
+                        StepResult {
+                            success: false,
+                            value: Value::None,
+                            error: Some("Path does not exist".into()),
+                        }
                     }
                 }
                 _ => StepResult {

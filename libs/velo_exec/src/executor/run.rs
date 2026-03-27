@@ -1,7 +1,7 @@
 use super::{Executor, process, transform};
-use crate::{core::*, executor::resolve};
+use crate::{core::*, executor::resolve, platform::Platform};
 
-impl<H: SystemHandler> Executor<H> {
+impl<H: SystemHandler, P: Platform> Executor<H, P> {
     pub fn run(&self, steps: &[Step], ctx: &mut Context) -> StepResult {
         for step in steps {
             let result = match step {
@@ -36,20 +36,31 @@ impl<H: SystemHandler> Executor<H> {
                 args,
                 mode,
                 shell,
-            } => process::run_process(program, args, mode, *shell, ctx),
+            } => {
+                let program = resolve::resolve_string(program, ctx);
+
+                let args: Vec<String> = args
+                    .iter()
+                    .map(|a| resolve::resolve_string(a, ctx))
+                    .collect();
+
+                let cmd = self.platform.build_command(&program, &args, *shell, ctx);
+
+                process::run_process(cmd, mode, ctx)
+            }
 
             Action::OpenUrl { url } => {
                 let url = resolve::resolve_string(url, ctx);
 
-                process::run_process(
-                    "start",
-                    &vec!["".into(), url],
-                    &ExecMode::FireForget,
-                    true,
-                    ctx,
-                )
+                let cmd = self
+                    .platform
+                    .build_command("start", &vec!["".into(), url], true, ctx);
+
+                process::run_process(cmd, &ExecMode::FireForget, ctx)
             }
+
             Action::System(id) => self.system.run(*id, ctx),
+
             Action::Transform(t) => transform::run_transform(t, ctx),
         }
     }

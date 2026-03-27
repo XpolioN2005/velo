@@ -1,4 +1,5 @@
 use velo_exec::executor::system::DefaultSystem;
+use velo_exec::platform::WindowsPlatform;
 use velo_exec::*;
 
 // ── dummy system ─────────────────────────
@@ -17,8 +18,10 @@ impl SystemHandler for DummySystem {
 
 // ── helpers ─────────────────────────────
 
-fn executor() -> Executor<DummySystem> {
-    Executor::new(DummySystem)
+type TestExecutor = Executor<DummySystem, WindowsPlatform>;
+
+fn executor() -> TestExecutor {
+    Executor::new(DummySystem, WindowsPlatform)
 }
 
 // ── tests ───────────────────────────────
@@ -37,7 +40,6 @@ fn basic_execution_updates_last() {
     }];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
@@ -62,7 +64,6 @@ fn variable_assignment_works() {
     }];
 
     let mut ctx = Context::new(vec![]);
-
     exec.run(&steps, &mut ctx);
 
     match ctx.vars.get("num") {
@@ -85,7 +86,6 @@ fn placeholder_args_work() {
     }];
 
     let mut ctx = Context::new(vec!["hello".into()]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
@@ -140,7 +140,6 @@ fn placeholder_last_works() {
     ];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
@@ -166,7 +165,6 @@ fn process_capture_works() {
     }];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
@@ -193,7 +191,6 @@ fn transform_regex_works() {
     }];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     match result.value {
@@ -226,7 +223,6 @@ fn transform_uses_ctx_last_when_none() {
     ];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
@@ -275,9 +271,6 @@ fn real_rg_pipeline() {
 
     let result = exec.run(&steps, &mut ctx);
 
-    println!("RAW OUTPUT = {:?}", ctx.last);
-    println!("file = {:?}", ctx.vars.get("file"));
-
     assert!(result.success);
 }
 
@@ -305,7 +298,6 @@ fn failure_stops_execution() {
     ];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(!result.success);
@@ -314,7 +306,7 @@ fn failure_stops_execution() {
 
 #[test]
 fn system_get_and_set_cwd() {
-    let exec = Executor::new(DefaultSystem);
+    let exec = Executor::new(DefaultSystem, WindowsPlatform);
 
     let steps = vec![
         Step::Action {
@@ -328,7 +320,6 @@ fn system_get_and_set_cwd() {
     ];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
@@ -340,7 +331,6 @@ fn split_and_first_pipeline() {
     let exec = executor();
 
     let steps = vec![
-        // simulate rg output
         Step::Action {
             action: Action::Transform(Transform::Regex {
                 input: Some("src/main.rs:10\nsrc/lib.rs:20".into()),
@@ -349,7 +339,6 @@ fn split_and_first_pipeline() {
             }),
             assign_to: None,
         },
-        // split lines
         Step::Action {
             action: Action::Transform(Transform::Split {
                 input: None,
@@ -357,12 +346,10 @@ fn split_and_first_pipeline() {
             }),
             assign_to: None,
         },
-        // take first line
         Step::Action {
             action: Action::Transform(Transform::First { input: None }),
             assign_to: None,
         },
-        // split file:line
         Step::Action {
             action: Action::Transform(Transform::Split {
                 input: None,
@@ -370,7 +357,6 @@ fn split_and_first_pipeline() {
             }),
             assign_to: None,
         },
-        // take file only
         Step::Action {
             action: Action::Transform(Transform::First { input: None }),
             assign_to: Some("file".into()),
@@ -378,7 +364,6 @@ fn split_and_first_pipeline() {
     ];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
@@ -401,7 +386,6 @@ fn open_url_action_works() {
     }];
 
     let mut ctx = Context::new(vec![]);
-
     let result = exec.run(&steps, &mut ctx);
 
     assert!(result.success);
