@@ -1,6 +1,10 @@
-use crate::command::{OnFailure, UserAction, UserCommand, UserPrompt};
+use crate::command::{Command, CommandRegistry};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
+use velo_exec::core::{Action, Step, Transform};
 
 // ── paths ────────────────────────────────────────────────────────────────────
 
@@ -66,11 +70,11 @@ fn ensure_default_config(path: &PathBuf) {
     }
 
     let default = "\
-# velo configuration\n\
-\n\
-# window position — set automatically on drag, or override manually\n\
-# window_x: 960\n\
-# window_y: 400\n\
+# velo configuration
+
+# window position — set automatically on drag, or override manually
+# window_x: 960
+# window_y: 400
 ";
 
     let _ = std::fs::write(path, default);
@@ -79,6 +83,7 @@ fn ensure_default_config(path: &PathBuf) {
 // ── commands.yaml ─────────────────────────────────────────────────────────────
 
 mod yaml_types {
+    use super::*;
     use serde::Deserialize;
 
     #[derive(Deserialize)]
@@ -93,129 +98,131 @@ mod yaml_types {
         pub description: String,
         #[serde(default)]
         pub aliases: Vec<String>,
-        pub action: RawAction,
+        pub steps: Vec<Step>,
     }
+}
 
-    #[derive(Deserialize)]
-    pub struct RawPrompt {
-        pub label: String,
-        #[serde(default)]
-        pub optional: bool,
+// ── ARG PARSER ────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+struct ArgSpec {
+    order: Vec<String>,
+    defaults: HashMap<String, String>,
+}
+
+fn process_steps(steps: &mut [Step]) -> ArgSpec {
+    let mut spec = ArgSpec::default();
+    for step in steps {
+        process_step(step, &mut spec);
     }
+    spec
+}
 
-    #[derive(Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum RawOnFailure {
-        Stop,
-        Continue,
-    }
-
-    impl Default for RawOnFailure {
-        fn default() -> Self {
-            RawOnFailure::Stop
+fn process_step(step: &mut Step, spec: &mut ArgSpec) {
+    match &mut step.action {
+        Action::Process { program, args, .. } => {
+            rewrite_string(program, spec);
+            for arg in args {
+                rewrite_string(arg, spec);
+            }
         }
-    }
 
-    #[derive(Deserialize)]
-    #[serde(tag = "type", rename_all = "snake_case")]
-    pub enum RawAction {
-        Launch {
-            program: String,
-            args: Vec<String>,
-            #[serde(default)]
-            prompts: Vec<RawPrompt>,
-        },
-        OpenUrl {
-            url: String,
-            #[serde(default)]
-            prompts: Vec<RawPrompt>,
-        },
-        Compound {
-            steps: Vec<RawAction>,
-            // mode: "sequential" | "parallel" — default parallel
-            #[serde(default)]
-            mode: RawCompoundMode,
-            #[serde(default)]
-            on_failure: RawOnFailure,
-        },
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum RawCompoundMode {
-        Parallel,
-        Sequential,
-    }
-
-    impl Default for RawCompoundMode {
-        fn default() -> Self {
-            RawCompoundMode::Parallel
+        Action::Shell { command, .. } => {
+            rewrite_string(command, spec);
         }
-    }
-}
 
-fn raw_prompt(p: yaml_types::RawPrompt) -> UserPrompt {
-    UserPrompt {
-        label: p.label,
-        optional: p.optional,
-    }
-}
+        Action::OpenUrl { url } => {
+            rewrite_string(url, spec);
+        }
 
-fn raw_on_failure(r: yaml_types::RawOnFailure) -> OnFailure {
-    match r {
-        yaml_types::RawOnFailure::Stop => OnFailure::Stop,
-        yaml_types::RawOnFailure::Continue => OnFailure::Continue,
-    }
-}
+        Action::Transform(t) => match t {
+            Transform::Regex { input, pattern, .. } => {
+                // validate regex early
+                let _ = Regex::new(pattern).expect("Invalid regex in transform");
 
-fn raw_to_user_action(raw: yaml_types::RawAction) -> UserAction {
-    match raw {
-        yaml_types::RawAction::Launch {
-            program,
-            args,
-            prompts,
-        } => UserAction::LaunchProcess {
-            program,
-            args,
-            prompts: prompts.into_iter().map(raw_prompt).collect(),
+                if let Some(s) = input {
+                    rewrite_string(s, spec);
+                }
+            }
+            Transform::Split { input, .. } => {
+                if let Some(s) = input {
+                    rewrite_string(s, spec);
+                }
+            }
+            Transform::First { input } => {
+                if let Some(s) = input {
+                    rewrite_string(s, spec);
+                }
+            }
         },
-        yaml_types::RawAction::OpenUrl { url, prompts } => UserAction::OpenUrl {
-            url,
-            prompts: prompts.into_iter().map(raw_prompt).collect(),
-        },
-        yaml_types::RawAction::Compound {
-            steps,
-            mode,
-            on_failure,
-        } => UserAction::Compound {
-            steps: steps.into_iter().map(raw_to_user_action).collect(),
-            sequential: matches!(mode, yaml_types::RawCompoundMode::Sequential),
-            on_failure: raw_on_failure(on_failure),
-        },
+
+        Action::System { .. } => {}
     }
 }
 
-pub fn load_user_commands() -> Vec<UserCommand> {
+// core rewrite logic
+fn rewrite_string(input: &mut String, spec: &mut ArgSpec) {
+    let re = Regex::new(r"\{arg:\s*([a-zA-Z0-9_]+)(?:\s*=\s*'([^']*)')?\}").unwrap();
+
+    let mut result = input.clone();
+
+    for cap in re.captures_iter(input) {
+        let name = cap[1].to_string();
+        let default = cap.get(2).map(|m| m.as_str().to_string());
+
+        let index = if let Some(pos) = spec.order.iter().position(|n| n == &name) {
+            pos
+        } else {
+            let pos = spec.order.len();
+            spec.order.push(name.clone());
+
+            if let Some(def) = default {
+                spec.defaults.insert(name.clone(), def);
+            }
+
+            pos
+        };
+
+        result = result.replace(&cap[0], &format!("{{{}}}", index));
+    }
+
+    *input = result;
+}
+
+// ── LOAD COMMANDS ─────────────────────────────────────────────────────────────
+
+pub fn load_user_commands() -> CommandRegistry {
     let path = match commands_path() {
         Some(p) => p,
         None => return vec![],
     };
+
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(_) => return vec![],
     };
+
     let parsed: yaml_types::ConfigFile = match serde_yaml::from_str(&text) {
         Ok(p) => p,
         Err(_) => return vec![],
     };
+
     parsed
         .commands
         .into_iter()
-        .map(|raw| UserCommand {
-            name: raw.name,
-            description: raw.description,
-            aliases: raw.aliases,
-            action: raw_to_user_action(raw.action),
+        .map(|mut raw| {
+            let arg_spec = process_steps(&mut raw.steps);
+
+            Rc::new(Command {
+                name: raw.name,
+                description: raw.description,
+                aliases: raw.aliases,
+                steps: raw.steps,
+
+                // IMPORTANT: preserve arg metadata
+                arg_order: arg_spec.order,
+                arg_defaults: arg_spec.defaults,
+            })
         })
         .collect()
 }

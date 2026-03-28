@@ -1,6 +1,8 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
+use regex::Regex;
+
 use crate::core::*;
 
 pub fn run_process(mut cmd: Command, mode: &ExecMode, ctx: &Context) -> StepResult {
@@ -69,7 +71,19 @@ pub fn run_process(mut cmd: Command, mode: &ExecMode, ctx: &Context) -> StepResu
             }
         }
 
-        ExecMode::StreamMatch(regex) => {
+        ExecMode::StreamMatch { pattern } => {
+            // compile regex at runtime
+            let regex = match Regex::new(pattern) {
+                Ok(r) => r,
+                Err(e) => {
+                    return StepResult {
+                        success: false,
+                        value: Value::None,
+                        error: Some(format!("Invalid regex: {}", e)),
+                    };
+                }
+            };
+
             let mut child = match cmd.stdout(Stdio::piped()).spawn() {
                 Ok(c) => c,
                 Err(e) => {
@@ -99,7 +113,7 @@ pub fn run_process(mut cmd: Command, mode: &ExecMode, ctx: &Context) -> StepResu
             StepResult {
                 success: false,
                 value: Value::None,
-                error: None,
+                error: Some("No match found".into()),
             }
         }
     }

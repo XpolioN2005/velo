@@ -1,13 +1,5 @@
-use velo_exec::core::{Context, StepResult, SystemActionId, SystemHandler, Value};
+use velo_exec::core::{Context, StepResult, SystemHandler, Value};
 use velo_exec::executor::system::DefaultSystem;
-
-// merged enum for internal use
-#[derive(Copy, Clone, Debug)]
-pub enum AppSystemId {
-    Core(SystemActionId),
-    CloseApp,
-    ReloadConfig,
-}
 
 pub struct AppSystem {
     pub default: DefaultSystem,
@@ -15,32 +7,40 @@ pub struct AppSystem {
 }
 
 impl SystemHandler for AppSystem {
-    fn run(&self, id: SystemActionId, ctx: &mut Context) -> StepResult {
-        let app_id = AppSystemId::Core(id);
-        self.run_extended(app_id, ctx)
-    }
-}
+    fn run(&self, action: &str, ctx: &mut Context) -> StepResult {
+        let core_result = self.default.run(action, ctx);
+        if core_result.success {
+            return core_result;
+        }
 
-impl AppSystem {
-    fn run_extended(&self, id: AppSystemId, ctx: &mut Context) -> StepResult {
-        match id {
-            AppSystemId::Core(core_id) => self.default.run(core_id, ctx),
-            AppSystemId::CloseApp => {
-                // todo
+        match action {
+            "internal.close_app" => {
+                // TODO: actually close using hwnd
+                // Example (later):
+                // unsafe { PostMessageW(self.hwnd, WM_CLOSE, ...); }
+
                 StepResult {
                     success: true,
                     value: Value::None,
                     error: None,
                 }
             }
-            AppSystemId::ReloadConfig => {
-                // todo
+
+            "internal.reload_config" => {
+                // TODO: trigger reload logic
                 StepResult {
                     success: true,
                     value: Value::None,
                     error: None,
                 }
             }
+
+            // 3. Unknown action
+            _ => StepResult {
+                success: false,
+                value: Value::None,
+                error: Some(format!("Unknown system action: {}", action)),
+            },
         }
     }
 }

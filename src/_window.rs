@@ -30,7 +30,6 @@ use windows::{
 };
 
 use crate::app::{AppState, InputMode};
-use crate::command::WindowAction;
 use crate::renderer::{Renderer, layout, palette};
 
 const WIN_WIDTH_RATIO: f32 = 0.40;

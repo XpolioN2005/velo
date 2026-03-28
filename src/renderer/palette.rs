@@ -1,7 +1,6 @@
 use windows::{Win32::Foundation::RECT, Win32::UI::WindowsAndMessaging::GetClientRect};
 
 use crate::app::{AppState, InputMode};
-use crate::command::CommandRef;
 use crate::renderer::{Renderer, draw, layout, theme};
 
 pub fn draw_palette(
@@ -14,17 +13,15 @@ pub fn draw_palette(
         renderer.begin();
         renderer.clear();
 
+        // Get window width
         let mut rc = RECT::default();
         let _ = GetClientRect(hwnd, &mut rc);
         let w = rc.right as f32;
 
-        // title bar
-        let _ = draw::draw_rect_filled(
-            &renderer.target,
-            layout::title_bar_rect(w),
-            theme::TITLE_BAR_BG,
-        );
+        // --- Title bar ---
         let title_rect = layout::title_bar_rect(w);
+        let _ = draw::draw_rect_filled(&renderer.target, title_rect, theme::TITLE_BAR_BG);
+
         let title_text_rect = windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F {
             left: title_rect.left + layout::PADDING_H,
             top: title_rect.top,
@@ -39,7 +36,7 @@ pub fn draw_palette(
             theme::TITLE_TEXT,
         );
 
-        // title bar bottom border
+        // Title bar bottom border
         let _ = draw::draw_rect_filled(
             &renderer.target,
             windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F {
@@ -51,7 +48,7 @@ pub fn draw_palette(
             theme::DIVIDER,
         );
 
-        // outer border
+        // Outer border
         let border_color = if app.focused {
             theme::BORDER_FOCUS
         } else {
@@ -60,7 +57,7 @@ pub fn draw_palette(
         let _ =
             draw::draw_rect_outline(&renderer.target, layout::border_rect(w), border_color, 1.5);
 
-        // query bar
+        // --- Query / Arg Input Bar ---
         let text_rect = layout::query_bar_rect(w);
         let active_buf = app.active_buf();
         let show_placeholder = active_buf.is_empty();
@@ -76,7 +73,6 @@ pub fn draw_palette(
                         theme::TEXT_DIM,
                     );
                 } else {
-                    // selection highlight
                     if let Some(sel) = app.selection {
                         let _ = draw::draw_selection_highlight(
                             &renderer.target,
@@ -88,7 +84,6 @@ pub fn draw_palette(
                             theme::SELECTION_BG,
                         );
                     }
-                    // caret — only when no selection
                     if caret_visible && app.selection.is_none() {
                         let _ = draw::draw_caret(
                             &renderer.target,
@@ -121,7 +116,6 @@ pub fn draw_palette(
                         theme::TEXT_DIM,
                     );
                 } else {
-                    // selection highlight
                     if let Some(sel) = app.selection {
                         let _ = draw::draw_selection_highlight(
                             &renderer.target,
@@ -133,7 +127,6 @@ pub fn draw_palette(
                             theme::SELECTION_BG,
                         );
                     }
-                    // caret — only when no selection
                     if caret_visible && app.selection.is_none() {
                         let _ = draw::draw_caret(
                             &renderer.target,
@@ -157,59 +150,38 @@ pub fn draw_palette(
             }
         }
 
+        // If no results or in ArgInput mode, finish early
         if app.results.is_empty() || matches!(app.mode, InputMode::ArgInput { .. }) {
             renderer.end().unwrap();
             return;
         }
 
-        let mut last_was_builtin = matches!(
-            app.results.first().map(|m| m.cmd_ref),
-            Some(CommandRef::BuiltIn(_))
-        );
+        // --- Results List ---
 
         for (i, matched) in app.results.iter().enumerate() {
-            let cmd_ref = matched.cmd_ref;
-            let is_builtin = matches!(cmd_ref, CommandRef::BuiltIn(_));
-
-            if !is_builtin && last_was_builtin && i > 0 {
-                let _ = draw::draw_rect_filled(
-                    &renderer.target,
-                    layout::divider_rect(w, i),
-                    theme::DIVIDER,
-                );
-            }
-            last_was_builtin = is_builtin;
-
             let row = layout::row_rect(w, i);
 
+            // Row highlight
             if i == app.selected {
                 let _ = draw::draw_rect_filled(&renderer.target, row, theme::HIGHLIGHT_BG);
             }
 
-            let (name, desc) = match cmd_ref {
-                CommandRef::BuiltIn(idx) => {
-                    let cmd = &crate::command::BUILT_INS[idx];
-                    (cmd.name, cmd.description)
-                }
-                CommandRef::User(idx) => {
-                    let cmd = &app.user_commands[idx];
-                    (cmd.name.as_str(), cmd.description.as_str())
-                }
-            };
-
+            // Draw name with highlights
             let _ = draw::draw_text_highlighted(
                 &renderer.target,
                 &renderer.dwrite,
-                name,
+                &matched.name,
                 &renderer.text_ui,
                 layout::name_rect(row),
                 theme::TEXT,
                 theme::ACCENT,
                 &matched.match_indices,
             );
+
+            // Draw description
             let _ = draw::draw_text(
                 &renderer.target,
-                desc,
+                &matched.description,
                 &renderer.text_desc,
                 layout::desc_rect(row),
                 theme::TEXT_DESC,

@@ -7,7 +7,7 @@ use velo_exec::*;
 struct DummySystem;
 
 impl SystemHandler for DummySystem {
-    fn run(&self, _: SystemActionId, _: &mut Context) -> StepResult {
+    fn run(&self, _: &str, _: &mut Context) -> StepResult {
         StepResult {
             success: true,
             value: Value::None,
@@ -30,7 +30,7 @@ fn executor() -> TestExecutor {
 fn basic_execution_updates_last() {
     let exec = executor();
 
-    let steps = vec![Step::Action {
+    let steps = vec![Step {
         action: Action::Transform(Transform::Regex {
             input: Some("abc123".into()),
             pattern: r"(\d+)".into(),
@@ -54,7 +54,7 @@ fn basic_execution_updates_last() {
 fn variable_assignment_works() {
     let exec = executor();
 
-    let steps = vec![Step::Action {
+    let steps = vec![Step {
         action: Action::Transform(Transform::Regex {
             input: Some("val=42".into()),
             pattern: r"=(\d+)".into(),
@@ -76,7 +76,7 @@ fn variable_assignment_works() {
 fn placeholder_args_work() {
     let exec = executor();
 
-    let steps = vec![Step::Action {
+    let steps = vec![Step {
         action: Action::Transform(Transform::Regex {
             input: Some("{0}".into()),
             pattern: r"(hello)".into(),
@@ -99,7 +99,7 @@ fn placeholder_vars_work() {
     ctx.vars
         .insert("name".into(), Value::String("world".into()));
 
-    let steps = vec![Step::Action {
+    let steps = vec![Step {
         action: Action::Transform(Transform::Regex {
             input: Some("hello {var:name}".into()),
             pattern: r"hello (.+)".into(),
@@ -121,7 +121,7 @@ fn placeholder_last_works() {
     let exec = executor();
 
     let steps = vec![
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: Some("abc123".into()),
                 pattern: r"(\d+)".into(),
@@ -129,7 +129,7 @@ fn placeholder_last_works() {
             }),
             assign_to: None,
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: Some("{last}".into()),
                 pattern: r"(123)".into(),
@@ -154,7 +154,7 @@ fn placeholder_last_works() {
 fn process_capture_works() {
     let exec = executor();
 
-    let steps = vec![Step::Action {
+    let steps = vec![Step {
         action: Action::Shell {
             command: "echo hello".into(),
             mode: ExecMode::Capture,
@@ -179,7 +179,7 @@ fn process_capture_works() {
 fn transform_regex_works() {
     let exec = executor();
 
-    let steps = vec![Step::Action {
+    let steps = vec![Step {
         action: Action::Transform(Transform::Regex {
             input: Some("abc999xyz".into()),
             pattern: r"(\d+)".into(),
@@ -202,7 +202,7 @@ fn transform_uses_ctx_last_when_none() {
     let exec = executor();
 
     let steps = vec![
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: Some("file.rs:123".into()),
                 pattern: r"(.+):\d+".into(),
@@ -210,7 +210,7 @@ fn transform_uses_ctx_last_when_none() {
             }),
             assign_to: None,
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: None,
                 pattern: r"(.+)\.rs".into(),
@@ -236,15 +236,15 @@ fn real_rg_pipeline() {
     let exec = executor();
 
     let steps = vec![
-        Step::Action {
-            action: Action::LaunchProcess {
+        Step {
+            action: Action::Process {
                 program: "rg".into(),
                 args: vec!["fn".into(), ".".into(), "--max-count".into(), "100".into()],
                 mode: ExecMode::Capture,
             },
             assign_to: None,
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: None,
                 pattern: r"^([^:\n]+)".into(),
@@ -252,7 +252,7 @@ fn real_rg_pipeline() {
             }),
             assign_to: Some("file".into()),
         },
-        Step::Action {
+        Step {
             action: Action::Shell {
                 command: "code {var:file}".into(),
                 mode: ExecMode::FireForget,
@@ -274,7 +274,7 @@ fn failure_stops_execution() {
     let exec = executor();
 
     let steps = vec![
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: Some("abc".into()),
                 pattern: r"(\d+)".into(),
@@ -282,7 +282,7 @@ fn failure_stops_execution() {
             }),
             assign_to: Some("x".into()),
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: Some("123".into()),
                 pattern: r"(\d+)".into(),
@@ -304,12 +304,16 @@ fn system_get_and_set_cwd() {
     let exec = Executor::new(DefaultSystem, WindowsPlatform);
 
     let steps = vec![
-        Step::Action {
-            action: Action::System(SystemActionId::GetCwd),
+        Step {
+            action: Action::System {
+                action: "core.get_cwd".into(),
+            },
             assign_to: Some("cwd".into()),
         },
-        Step::Action {
-            action: Action::System(SystemActionId::SetCwd),
+        Step {
+            action: Action::System {
+                action: "core.set_cwd".into(),
+            },
             assign_to: None,
         },
     ];
@@ -326,7 +330,7 @@ fn split_and_first_pipeline() {
     let exec = executor();
 
     let steps = vec![
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Regex {
                 input: Some("src/main.rs:10\nsrc/lib.rs:20".into()),
                 pattern: r"(.+)".into(),
@@ -334,25 +338,25 @@ fn split_and_first_pipeline() {
             }),
             assign_to: None,
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Split {
                 input: None,
                 delimiter: "\n".into(),
             }),
             assign_to: None,
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::First { input: None }),
             assign_to: None,
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::Split {
                 input: None,
                 delimiter: ":".into(),
             }),
             assign_to: None,
         },
-        Step::Action {
+        Step {
             action: Action::Transform(Transform::First { input: None }),
             assign_to: Some("file".into()),
         },
@@ -373,7 +377,7 @@ fn split_and_first_pipeline() {
 fn open_url_action_works() {
     let exec = executor();
 
-    let steps = vec![Step::Action {
+    let steps = vec![Step {
         action: Action::OpenUrl {
             url: "https://example.com".into(),
         },

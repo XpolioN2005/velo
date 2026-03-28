@@ -6,9 +6,9 @@ use crate::core::*;
 pub struct DefaultSystem;
 
 impl SystemHandler for DefaultSystem {
-    fn run(&self, action: SystemActionId, ctx: &mut Context) -> StepResult {
+    fn run(&self, action: &str, ctx: &mut Context) -> StepResult {
         match action {
-            SystemActionId::GetCwd => match env::current_dir() {
+            "core.get_cwd" => match env::current_dir() {
                 Ok(path) => StepResult {
                     success: true,
                     value: Value::String(path.to_string_lossy().to_string()),
@@ -21,7 +21,7 @@ impl SystemHandler for DefaultSystem {
                 },
             },
 
-            SystemActionId::SetCwd => match &ctx.last {
+            "core.set_cwd" => match &ctx.last {
                 Value::String(path) => {
                     let pb = PathBuf::from(path);
                     if pb.exists() {
@@ -46,7 +46,7 @@ impl SystemHandler for DefaultSystem {
                 },
             },
 
-            SystemActionId::JoinPath => {
+            "core.join_path" => {
                 let base = match &ctx.cwd {
                     Some(p) => p.clone(),
                     None => match env::current_dir() {
@@ -77,6 +77,12 @@ impl SystemHandler for DefaultSystem {
                     },
                 }
             }
+
+            _ => StepResult {
+                success: false,
+                value: Value::None,
+                error: Some(format!("Unknown core action: {}", action)),
+            },
         }
     }
 }

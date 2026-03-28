@@ -14,5 +14,5 @@ fn main() {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
-    window::create_and_run();
+    window::create::create_and_run();
 }

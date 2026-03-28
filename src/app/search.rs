@@ -1,7 +1,6 @@
-use crate::command::{BUILT_INS, CommandRef, UserCommand};
-
 pub struct MatchedCommand {
-    pub cmd_ref: CommandRef,
+    pub name: String,
+    pub description: String,
     pub match_indices: Vec<usize>,
     pub score: i32,
 }
@@ -13,51 +12,51 @@ pub fn build_results(query: &str, user_commands: &[UserCommand]) -> Vec<MatchedC
     }
     let q = query.to_lowercase();
 
-    for (i, cmd) in BUILT_INS.iter().enumerate() {
-        if let Some((score, indices)) = fuzzy_match(cmd.name, &q) {
+    // Built-in commands
+    for cmd in BUILT_INS.iter() {
+        if let Some((score, indices)) = fuzzy_match(&cmd.name, &q) {
             results.push(MatchedCommand {
-                cmd_ref: CommandRef::BuiltIn(i),
+                name: cmd.name.to_string(),
+                description: cmd.description.to_string(),
                 match_indices: indices,
                 score,
             });
-        } else {
-            let alias_score = cmd
-                .aliases
-                .iter()
-                .filter_map(|a| fuzzy_match(a, &q))
-                .map(|(s, _)| s + 15)
-                .max();
-            if let Some(score) = alias_score {
-                results.push(MatchedCommand {
-                    cmd_ref: CommandRef::BuiltIn(i),
-                    match_indices: vec![],
-                    score,
-                });
-            }
+        } else if let Some(score) = cmd
+            .aliases
+            .iter()
+            .filter_map(|a| fuzzy_match(a, &q).map(|(s, _)| s + 15))
+            .max()
+        {
+            results.push(MatchedCommand {
+                name: cmd.name.to_string(),
+                description: cmd.description.to_string(),
+                match_indices: vec![],
+                score,
+            });
         }
     }
 
-    for (i, cmd) in user_commands.iter().enumerate() {
+    // User commands
+    for cmd in user_commands.iter() {
         if let Some((score, indices)) = fuzzy_match(&cmd.name, &q) {
             results.push(MatchedCommand {
-                cmd_ref: CommandRef::User(i),
+                name: cmd.name.clone(),
+                description: cmd.description.clone(),
                 match_indices: indices,
                 score,
             });
-        } else {
-            let alias_score = cmd
-                .aliases
-                .iter()
-                .filter_map(|a| fuzzy_match(a, &q))
-                .map(|(s, _)| s + 15)
-                .max();
-            if let Some(score) = alias_score {
-                results.push(MatchedCommand {
-                    cmd_ref: CommandRef::User(i),
-                    match_indices: vec![],
-                    score,
-                });
-            }
+        } else if let Some(score) = cmd
+            .aliases
+            .iter()
+            .filter_map(|a| fuzzy_match(a, &q).map(|(s, _)| s + 15))
+            .max()
+        {
+            results.push(MatchedCommand {
+                name: cmd.name.clone(),
+                description: cmd.description.clone(),
+                match_indices: vec![],
+                score,
+            });
         }
     }
 

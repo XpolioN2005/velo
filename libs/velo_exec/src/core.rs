@@ -1,7 +1,12 @@
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-#[derive(Clone, Debug)]
+// ── values ───────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Value {
     None,
     String(String),
@@ -9,6 +14,8 @@ pub enum Value {
     Number(f64),
     List(Vec<Value>),
 }
+
+// ── context ──────────────────────────────────────────────────────────────────
 
 pub struct Context {
     pub vars: HashMap<String, Value>,
@@ -28,14 +35,7 @@ impl Context {
     }
 }
 
-// ── system ─────────────────────────────
-
-#[derive(Copy, Clone, Debug)]
-pub enum SystemActionId {
-    GetCwd,
-    SetCwd,
-    JoinPath,
-}
+// ── system ───────────────────────────────────────────────────────────────────
 
 pub struct StepResult {
     pub success: bool,
@@ -44,18 +44,37 @@ pub struct StepResult {
 }
 
 pub trait SystemHandler {
-    fn run(&self, action: SystemActionId, ctx: &mut Context) -> StepResult;
+    fn run(&self, action: &str, ctx: &mut Context) -> StepResult;
 }
 
-// ── actions ───────────────────────────
+// ── execution mode ───────────────────────────────────────────────────────────
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExecMode {
     FireForget,
     Capture,
     Stream,
-    StreamMatch(regex::Regex),
+    StreamMatch { pattern: String },
 }
 
+impl ExecMode {
+    pub fn compile(self) -> Self {
+        match self {
+            ExecMode::StreamMatch { pattern } => {
+                // Validate regex early
+                let _ = Regex::new(&pattern).expect("Invalid regex pattern");
+                ExecMode::StreamMatch { pattern }
+            }
+            other => other,
+        }
+    }
+}
+
+// ── transforms ───────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "transform", rename_all = "snake_case")]
 pub enum Transform {
     Regex {
         input: Option<String>,
@@ -67,12 +86,16 @@ pub enum Transform {
         delimiter: String,
     },
     First {
-        input: Option<Vec<String>>,
+        input: Option<String>,
     },
 }
 
+// ── actions ──────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
-    LaunchProcess {
+    Process {
         program: String,
         args: Vec<String>,
         mode: ExecMode,
@@ -84,15 +107,18 @@ pub enum Action {
     OpenUrl {
         url: String,
     },
-    System(SystemActionId),
+    System {
+        action: String,
+    },
     Transform(Transform),
 }
 
-// ── steps ─────────────────────────────
+// ── step ─────────────────────────────────────────────────────────────────────
 
-pub enum Step {
-    Action {
-        action: Action,
-        assign_to: Option<String>,
-    },
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Step {
+    pub action: Action,
+
+    #[serde(default)]
+    pub assign_to: Option<String>,
 }
