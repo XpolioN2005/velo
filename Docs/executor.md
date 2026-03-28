@@ -312,3 +312,51 @@ println!("Assigned variables: {:?}", ctx.vars);
 - `{var:<name>}` placeholders allow reusing variables in later steps.
 - `ctx.last` is automatically updated after each step and can be used for chaining.
 - `ExecMode::Capture` captures output, `FireForget` launches processes without waiting.
+
+## 17. YAML Example
+```YAML
+commands:
+  - name: Smart Search
+    description: "Search, extract first match, and open it"
+    aliases:
+      - search
+      - rg
+      - find
+
+    steps:
+      # Step 1: run ripgrep with inline arg defaults
+      - action:
+          type: process
+          program: "rg"
+          args:
+            - "{arg:query = 'fn'}"
+            - "{arg:path = '.'}"
+            - "--max-count"
+            - "100"
+          mode: capture
+        assign_to: "output"
+
+      # Step 2: extract first matching file
+      - action:
+          type: transform
+          transform: regex
+          input: "{var:output}"
+          pattern: "^([^:\n]+)"
+          group: 1
+        assign_to: "file"
+
+      # Step 3: demonstrate ctx.last chaining
+      - action:
+          type: transform
+          transform: regex
+          input: "{last}"
+          pattern: "(.+)"
+          group: 1
+        assign_to: "clean_file"
+
+      # Step 4: use arg + var in shell
+      - action:
+          type: shell
+          command: "echo Searching {arg:query = 'fn'} && code {var:clean_file}"
+          mode: fire_forget
+```
