@@ -31,7 +31,7 @@ pub fn build_command_lookup(commands: &CommandRegistry) -> HashMap<String, Rc<Co
 pub fn built_in_commands() -> CommandRegistry {
     vec![
         Rc::new(Command {
-            name: "close".into(),
+            name: "Quit".into(),
             description: "Close the application".into(),
             aliases: vec!["exit".into(), "quit".into()],
             steps: vec![Step {
@@ -44,7 +44,7 @@ pub fn built_in_commands() -> CommandRegistry {
             arg_defaults: HashMap::new(),
         }),
         Rc::new(Command {
-            name: "reload".into(),
+            name: "Reload".into(),
             description: "Reload config and commands".into(),
             aliases: vec!["refresh".into()],
             steps: vec![Step {

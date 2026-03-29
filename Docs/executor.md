@@ -76,7 +76,7 @@ enum Action {
     LaunchProcess { program: String, args: Vec<String>, mode: ExecMode },
     Shell { command: String, mode: ExecMode },
     OpenUrl { url: String },
-    System(SystemActionId),
+    System(String),
     Transform(Transform),
 }
 ```
@@ -314,6 +314,7 @@ println!("Assigned variables: {:?}", ctx.vars);
 - `ExecMode::Capture` captures output, `FireForget` launches processes without waiting.
 
 ## 17. YAML Example
+
 ```YAML
 commands:
   - name: Smart Search

@@ -359,6 +359,9 @@ impl AppState {
         let result = self.executor.run(&cmd.steps, &mut ctx);
 
         if !result.success {
+            if let Some(err) = &result.error {
+                eprintln!("Command error: {}", err); // log the error
+            }
             return WindowAction::Nothing;
         }
 

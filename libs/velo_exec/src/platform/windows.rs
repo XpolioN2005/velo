@@ -1,7 +1,13 @@
 use std::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use super::Platform;
 use crate::core::*;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct WindowsPlatform;
 
@@ -12,6 +18,11 @@ impl Platform for WindowsPlatform {
 
         if let Some(cwd) = &ctx.cwd {
             cmd.current_dir(cwd);
+        }
+
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
         cmd
@@ -25,6 +36,11 @@ impl Platform for WindowsPlatform {
             cmd.current_dir(cwd);
         }
 
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         cmd
     }
 
@@ -34,6 +50,11 @@ impl Platform for WindowsPlatform {
 
         if let Some(cwd) = &ctx.cwd {
             cmd.current_dir(cwd);
+        }
+
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
         cmd
