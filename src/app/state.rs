@@ -1,12 +1,18 @@
 use super::MatchedCommand;
-use super::{executor, search};
-use crate::command::{BUILT_INS, CommandRef, UserCommand, WindowAction};
-use crate::config::{AppConfig, load_config, load_user_commands, save_config};
+use super::search;
+use super::system::AppSystem;
+use crate::command::{Command, CommandRegistry, load_all_commands};
+use crate::config::{AppConfig, load_config, save_config};
+use crate::window::state::WindowAction;
+use std::rc::Rc;
+use velo_exec::executor::system::DefaultSystem;
+use velo_exec::platform::WindowsPlatform;
+use velo_exec::{Context, Executor, Value};
 
 pub enum InputMode {
     Query,
     ArgInput {
-        command: CommandRef,
+        command: Rc<Command>,
         prompt_index: usize,
         collected_args: Vec<String>,
     },
@@ -18,28 +24,37 @@ pub struct AppState {
     pub mode: InputMode,
     pub focused: bool,
     pub selected: usize,
-    pub user_commands: Vec<UserCommand>,
+    pub command_registry: CommandRegistry,
     pub results: Vec<MatchedCommand>,
     pub config: AppConfig,
     pub cursor: usize,
     pub selection: Option<(usize, usize)>,
+    pub executor: Executor<AppSystem, WindowsPlatform>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        let user_commands = load_user_commands();
+        let command_registry = load_all_commands();
         let config = load_config();
+        let executor = Executor::new(
+            AppSystem {
+                default: DefaultSystem,
+            },
+            WindowsPlatform,
+        );
+
         let mut state = Self {
             query: String::new(),
             arg_buffer: String::new(),
             mode: InputMode::Query,
             focused: true,
             selected: 0,
-            user_commands,
+            command_registry,
             results: Vec::new(),
             config,
             cursor: 0,
             selection: None,
+            executor,
         };
         state.rebuild_results();
         state
@@ -50,8 +65,6 @@ impl AppState {
         self.config.window_y = Some(y);
         save_config(&self.config);
     }
-
-    // ── active buffer helpers ─────────────────────────────────────────────────
 
     pub fn active_buf(&self) -> &str {
         match self.mode {
@@ -74,7 +87,7 @@ impl AppState {
         }
     }
 
-    // ── selection helpers ─────────────────────────────────────────────────────
+    // ── selection / cursor helpers ──────────────────────────────
 
     pub fn select_all(&mut self) {
         let len = self.active_buf().len();
@@ -89,8 +102,7 @@ impl AppState {
             Some(range) => range,
             None => return self.cursor,
         };
-        let buf = self.active_buf_mut();
-        buf.drain(s..e);
+        self.active_buf_mut().drain(s..e);
         self.cursor = s;
         s
     }
@@ -100,30 +112,19 @@ impl AppState {
         self.active_buf().get(s..e)
     }
 
-    // ── push_char ─────────────────────────────────────────────────────────────
-
     pub fn push_char(&mut self, c: char) {
-        if self.selection.is_some() {
-            let start = self.delete_selection();
-            let limit = self.active_limit();
-            let buf = self.active_buf_mut();
-            if buf.len() < limit {
-                buf.insert(start, c);
-                self.cursor = start + c.len_utf8();
-            }
-            if matches!(self.mode, InputMode::Query) {
-                self.selected = 0;
-                self.rebuild_results();
-            }
-            return;
-        }
+        let start = if self.selection.is_some() {
+            self.delete_selection()
+        } else {
+            self.cursor
+        };
 
         let limit = self.active_limit();
-        let cursor = self.cursor;
         let buf = self.active_buf_mut();
+
         if buf.len() < limit {
-            buf.insert(cursor, c);
-            self.cursor = cursor + c.len_utf8();
+            buf.insert(start, c);
+            self.cursor = start + c.len_utf8();
         }
 
         if matches!(self.mode, InputMode::Query) {
@@ -131,8 +132,6 @@ impl AppState {
             self.rebuild_results();
         }
     }
-
-    // ── pop_char ──────────────────────────────────────────────────────────────
 
     pub fn pop_char(&mut self) {
         if self.selection.is_some() {
@@ -144,49 +143,42 @@ impl AppState {
             return;
         }
 
-        match self.mode {
-            InputMode::Query => {
-                if self.cursor > 0 {
-                    let new_cursor = self.prev_char_boundary(&self.query.clone(), self.cursor);
-                    self.query.remove(new_cursor);
-                    self.cursor = new_cursor;
-                    self.selected = 0;
-                    self.rebuild_results();
-                }
-            }
-            InputMode::ArgInput { .. } => {
-                if self.arg_buffer.is_empty() {
-                    self.mode = InputMode::Query;
-                    self.arg_buffer.clear();
-                    self.cursor = self.query.len();
-                } else if self.cursor > 0 {
-                    let new_cursor = self.prev_char_boundary(&self.arg_buffer.clone(), self.cursor);
-                    self.arg_buffer.remove(new_cursor);
-                    self.cursor = new_cursor;
-                }
-            }
+        if self.cursor == 0 {
+            return;
+        }
+
+        let new_cursor = {
+            let buf = self.active_buf();
+            self.prev_char_boundary(buf, self.cursor)
+        };
+
+        let buf = self.active_buf_mut();
+        buf.remove(new_cursor);
+        self.cursor = new_cursor;
+
+        if matches!(self.mode, InputMode::Query) {
+            self.selected = 0;
+            self.rebuild_results();
         }
     }
 
-    // ── arrow keys ────────────────────────────────────────────────────────────
-
     pub fn move_cursor_left(&mut self) {
-        if let Some((start, _)) = self.selection.take() {
-            self.cursor = start;
-        } else {
-            self.cursor = self.prev_char_boundary(self.active_buf(), self.cursor);
-        }
+        let prev_cursor = self.prev_char_boundary(self.active_buf(), self.cursor);
+        self.cursor = self
+            .selection
+            .take()
+            .map(|(start, _)| start)
+            .unwrap_or(prev_cursor);
     }
 
     pub fn move_cursor_right(&mut self) {
-        if let Some((_, end)) = self.selection.take() {
-            self.cursor = end;
-        } else {
-            self.cursor = self.next_char_boundary(self.active_buf(), self.cursor);
-        }
+        let next_cursor = self.next_char_boundary(self.active_buf(), self.cursor);
+        self.cursor = self
+            .selection
+            .take()
+            .map(|(_, end)| end)
+            .unwrap_or(next_cursor);
     }
-
-    // ── clipboard ─────────────────────────────────────────────────────────────
 
     pub fn copy_text(&self) -> Option<String> {
         self.selected_text().map(|s| s.to_owned())
@@ -203,30 +195,31 @@ impl AppState {
     }
 
     pub fn paste_text(&mut self, text: &str) {
+        let available = {
+            let buf = self.active_buf();
+            self.active_limit().saturating_sub(buf.len())
+        };
+
+        let insert: String = text.chars().take(available).collect();
+
         if self.selection.is_some() {
             self.delete_selection();
         }
+
         let cursor = self.cursor;
-        let limit = self.active_limit();
         let buf = self.active_buf_mut();
-        let available = limit.saturating_sub(buf.len());
-        let insert: String = text.chars().take(available).collect();
-        let byte_len = insert.len();
+
         buf.insert_str(cursor, &insert);
-        self.cursor = cursor + byte_len;
+        self.cursor += insert.len();
+
         if matches!(self.mode, InputMode::Query) {
             self.selected = 0;
             self.rebuild_results();
         }
     }
 
-    // ── char boundary utils ───────────────────────────────────────────────────
-
     fn prev_char_boundary(&self, s: &str, pos: usize) -> usize {
-        if pos == 0 {
-            return 0;
-        }
-        let mut p = pos - 1;
+        let mut p = pos.saturating_sub(1);
         while p > 0 && !s.is_char_boundary(p) {
             p -= 1;
         }
@@ -234,17 +227,12 @@ impl AppState {
     }
 
     fn next_char_boundary(&self, s: &str, pos: usize) -> usize {
-        if pos >= s.len() {
-            return s.len();
-        }
         let mut p = pos + 1;
         while p < s.len() && !s.is_char_boundary(p) {
             p += 1;
         }
         p
     }
-
-    // ── clear_query ───────────────────────────────────────────────────────────
 
     pub fn clear_query(&mut self) {
         self.query.clear();
@@ -255,8 +243,6 @@ impl AppState {
         self.selection = None;
         self.rebuild_results();
     }
-
-    // ── result navigation ─────────────────────────────────────────────────────
 
     pub fn select_next(&mut self) {
         if matches!(self.mode, InputMode::Query) && !self.results.is_empty() {
@@ -270,8 +256,6 @@ impl AppState {
         }
     }
 
-    // ── prompt / enter / escape ───────────────────────────────────────────────
-
     pub fn current_prompt(&self) -> Option<&str> {
         match &self.mode {
             InputMode::Query => None,
@@ -279,49 +263,48 @@ impl AppState {
                 command,
                 prompt_index,
                 ..
-            } => {
-                let prompts = self.get_prompts(*command);
-                prompts.get(*prompt_index).map(|p| p.0)
-            }
+            } => command.arg_order.get(*prompt_index).map(|s| s.as_str()),
         }
     }
 
-    // hwnd passed in so execute_cmd can hand it to the sequential worker
     pub fn enter(&mut self, hwnd: isize) -> WindowAction {
         match &self.mode {
             InputMode::Query => {
                 if self.results.is_empty() {
                     return WindowAction::Nothing;
                 }
-                let cmd_ref = self.results[self.selected].cmd_ref;
-                let prompts = self.get_prompts(cmd_ref);
-                if prompts.is_empty() {
-                    self.execute_cmd(cmd_ref, vec![], hwnd)
-                } else {
-                    self.mode = InputMode::ArgInput {
-                        command: cmd_ref,
-                        prompt_index: 0,
-                        collected_args: Vec::new(),
-                    };
-                    self.arg_buffer.clear();
-                    self.cursor = 0;
-                    self.selection = None;
-                    WindowAction::Nothing
+
+                let cmd = self.results[self.selected].cmd.clone();
+                if cmd.arg_order.is_empty() {
+                    return self.execute_cmd(cmd, vec![], hwnd);
                 }
+
+                self.mode = InputMode::ArgInput {
+                    command: cmd.clone(),
+                    prompt_index: 0,
+                    collected_args: Vec::new(),
+                };
+
+                self.arg_buffer = cmd
+                    .arg_order
+                    .get(0)
+                    .and_then(|arg| cmd.arg_defaults.get(arg).cloned())
+                    .unwrap_or_default();
+                self.cursor = self.arg_buffer.len();
+                self.selection = None;
+
+                WindowAction::Nothing
             }
             InputMode::ArgInput { .. } => self.advance_arg(hwnd),
         }
     }
 
     pub fn escape(&mut self) {
-        match self.mode {
-            InputMode::ArgInput { .. } => {
-                self.mode = InputMode::Query;
-                self.arg_buffer.clear();
-                self.cursor = self.query.len();
-                self.selection = None;
-            }
-            InputMode::Query => {}
+        if let InputMode::ArgInput { .. } = self.mode {
+            self.mode = InputMode::Query;
+            self.arg_buffer.clear();
+            self.cursor = self.query.len();
+            self.selection = None;
         }
     }
 
@@ -329,18 +312,19 @@ impl AppState {
         matches!(self.mode, InputMode::Query)
     }
 
-    // ── internals ─────────────────────────────────────────────────────────────
-
     fn advance_arg(&mut self, hwnd: isize) -> WindowAction {
-        let (command, optional) = match &self.mode {
+        let (command, optional, collected_args, prompt_index) = match &mut self.mode {
             InputMode::ArgInput {
                 command,
                 prompt_index,
-                ..
+                collected_args,
             } => {
-                let prompts = self.get_prompts(*command);
-                let optional = prompts.get(*prompt_index).map(|p| p.1).unwrap_or(true);
-                (*command, optional)
+                let optional = command
+                    .arg_order
+                    .get(*prompt_index)
+                    .map(|arg| command.arg_defaults.contains_key(arg))
+                    .unwrap_or(true);
+                (command.clone(), optional, collected_args, prompt_index)
             }
             _ => return WindowAction::Nothing,
         };
@@ -349,58 +333,48 @@ impl AppState {
             return WindowAction::Nothing;
         }
 
-        let arg = self.arg_buffer.clone();
-        self.arg_buffer.clear();
-        self.cursor = 0;
-        self.selection = None;
-        let prompts_len = self.get_prompts(command).len();
+        let arg = std::mem::take(&mut self.arg_buffer);
+        collected_args.push(arg);
+        *prompt_index += 1;
 
-        if let InputMode::ArgInput {
-            collected_args,
-            prompt_index,
-            ..
-        } = &mut self.mode
-        {
-            collected_args.push(arg);
-            *prompt_index += 1;
-            if *prompt_index >= prompts_len {
-                let args = collected_args.clone();
-                self.mode = InputMode::Query;
-                return self.execute_cmd(command, args, hwnd);
-            }
+        if *prompt_index >= command.arg_order.len() {
+            let args = collected_args.clone();
+            self.mode = InputMode::Query;
+            return self.execute_cmd(command, args, hwnd);
         }
+
+        self.arg_buffer = command
+            .arg_order
+            .get(*prompt_index)
+            .and_then(|arg| command.arg_defaults.get(arg).cloned())
+            .unwrap_or_default();
+        self.cursor = self.arg_buffer.len();
+        self.selection = None;
+
         WindowAction::Nothing
     }
 
-    fn get_prompts(&self, cmd_ref: CommandRef) -> Vec<(&str, bool)> {
-        match cmd_ref {
-            CommandRef::BuiltIn(idx) => BUILT_INS[idx]
-                .action
-                .all_prompts()
-                .iter()
-                .map(|p| (p.label, p.optional))
-                .collect(),
-            CommandRef::User(idx) => self.user_commands[idx]
-                .action
-                .all_prompts()
-                .iter()
-                .map(|p| (p.label.as_str(), p.optional))
-                .collect(),
-        }
-    }
+    fn execute_cmd(&self, cmd: Rc<Command>, args: Vec<String>, _hwnd: isize) -> WindowAction {
+        let mut ctx = Context::new(args);
+        let result = self.executor.run(&cmd.steps, &mut ctx);
 
-    fn execute_cmd(&self, cmd_ref: CommandRef, args: Vec<String>, hwnd: isize) -> WindowAction {
-        match cmd_ref {
-            CommandRef::BuiltIn(idx) => {
-                executor::run_builtin(&BUILT_INS[idx].action, &args, 0, hwnd)
-            }
-            CommandRef::User(idx) => {
-                executor::run_user(&self.user_commands[idx].action, &args, 0, hwnd)
-            }
+        if !result.success {
+            return WindowAction::Nothing;
+        }
+
+        match &result.value {
+            Value::String(s) if s == "quit" => WindowAction::Quit,
+            _ => WindowAction::Hide,
         }
     }
 
     fn rebuild_results(&mut self) {
-        self.results = search::build_results(&self.query, &self.user_commands);
+        self.results = search::build_results(&self.query, &self.command_registry);
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
     }
 }

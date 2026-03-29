@@ -1,5 +1,4 @@
 // ── crate imports ─────────────────────────
-use crate::app::WindowAction;
 use crate::renderer::{layout, palette};
 use crate::window::{
     clipboard::{clipboard_read, clipboard_write},
@@ -191,7 +190,6 @@ pub unsafe extern "system" fn wnd_proc(
                                 resize_to_results(hwnd, &*ptr);
                                 let _ = InvalidateRect(Some(hwnd), None, false);
                             }
-                            WindowAction::RunSequence => {}
                         },
                         _ => {}
                     }

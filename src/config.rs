@@ -202,10 +202,13 @@ pub fn load_user_commands() -> CommandRegistry {
         Err(_) => return vec![],
     };
 
-    let parsed: yaml_types::ConfigFile = match serde_yaml::from_str(&text) {
-        Ok(p) => p,
-        Err(_) => return vec![],
-    };
+    // let parsed: yaml_types::ConfigFile = match serde_yaml::from_str(&text) {
+    //     Ok(p) => p,
+    //     Err(_) => return vec![],
+    // };
+
+    let parsed: yaml_types::ConfigFile =
+        serde_yaml::from_str(&text).expect("commands.yaml failed to parse");
 
     parsed
         .commands

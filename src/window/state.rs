@@ -28,3 +28,9 @@ pub struct WindowState {
     pub win_w: i32,
     pub caret_visible: bool,
 }
+
+pub enum WindowAction {
+    Quit,    // exit app completely
+    Hide,    // hide window
+    Nothing, // just refresh UI
+}

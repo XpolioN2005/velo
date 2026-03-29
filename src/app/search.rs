@@ -1,57 +1,44 @@
+use crate::command::CommandRegistry;
+use std::rc::Rc;
+
 pub struct MatchedCommand {
+    pub cmd: Rc<crate::command::Command>,
     pub name: String,
     pub description: String,
     pub match_indices: Vec<usize>,
     pub score: i32,
 }
 
-pub fn build_results(query: &str, user_commands: &[UserCommand]) -> Vec<MatchedCommand> {
+pub fn build_results(query: &str, commands: &CommandRegistry) -> Vec<MatchedCommand> {
     let mut results = Vec::new();
+
     if query.is_empty() {
         return results;
     }
+
     let q = query.to_lowercase();
 
-    // Built-in commands
-    for cmd in BUILT_INS.iter() {
+    for cmd in commands.iter() {
         if let Some((score, indices)) = fuzzy_match(&cmd.name, &q) {
             results.push(MatchedCommand {
-                name: cmd.name.to_string(),
-                description: cmd.description.to_string(),
-                match_indices: indices,
-                score,
-            });
-        } else if let Some(score) = cmd
-            .aliases
-            .iter()
-            .filter_map(|a| fuzzy_match(a, &q).map(|(s, _)| s + 15))
-            .max()
-        {
-            results.push(MatchedCommand {
-                name: cmd.name.to_string(),
-                description: cmd.description.to_string(),
-                match_indices: vec![],
-                score,
-            });
-        }
-    }
-
-    // User commands
-    for cmd in user_commands.iter() {
-        if let Some((score, indices)) = fuzzy_match(&cmd.name, &q) {
-            results.push(MatchedCommand {
+                cmd: Rc::clone(cmd),
                 name: cmd.name.clone(),
                 description: cmd.description.clone(),
                 match_indices: indices,
                 score,
             });
-        } else if let Some(score) = cmd
+            continue;
+        }
+
+        // match against aliases
+        if let Some(score) = cmd
             .aliases
             .iter()
             .filter_map(|a| fuzzy_match(a, &q).map(|(s, _)| s + 15))
             .max()
         {
             results.push(MatchedCommand {
+                cmd: Rc::clone(cmd),
                 name: cmd.name.clone(),
                 description: cmd.description.clone(),
                 match_indices: vec![],
