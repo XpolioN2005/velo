@@ -315,6 +315,8 @@ println!("Assigned variables: {:?}", ctx.vars);
 
 ## 17. YAML Example
 
+**Dummy:**
+
 ```YAML
 commands:
   - name: Smart Search
@@ -360,4 +362,61 @@ commands:
           type: shell
           command: "echo Searching {arg:query = 'fn'} && code {var:clean_file}"
           mode: fire_forget
+```
+
+**Git:**
+
+```YAML
+commands:
+  - name: Clone Repo and Open
+    description: "Clone a Git repository into a parent folder and open it in VS Code"
+    aliases:
+      - clone
+      - git-clone
+
+    steps:
+      # Step 1: store full repo URL
+      - action:
+          type: transform
+          transform: regex
+          input: "{arg:repo}"
+          pattern: "(.+)" # capture full input as string
+          group: 1
+        assign_to: "repo_url"
+
+      # Step 2: extract repo name from repo_url
+      - action:
+          type: transform
+          transform: regex
+          input: "{var:repo_url}"
+          pattern: ".*/([^/]+?)(\\.git)?$"
+          group: 1
+        assign_to: "repo_name"
+
+      # Step 3: resolve parent folder (default current directory)
+      - action:
+          type: transform
+          transform: regex
+          input: "{arg:folder = 'D:/'}"
+          pattern: "(.+)"
+          group: 1
+        assign_to: "parent_folder"
+
+      # Step 4: set cwd to parent folder
+      - action:
+          type: system
+          action: "core.set_cwd"
+
+      # Step 5: git clone into cwd
+      - action:
+          type: shell
+          command: "git clone {var:repo_url}"
+          mode: stream
+
+      # Step 6: open VS Code in cloned repo folder
+      - action:
+          type: shell
+          command: "code {var:repo_name}"
+          mode: fire_forget
+
 ```
