@@ -7,7 +7,7 @@ edition = "2024"
 members = [
     ".",
     "libs/velo_exec"
-]
+, "libs/velo_renderer"]
 
 [build-dependencies]
 winres = "0.1.12"
