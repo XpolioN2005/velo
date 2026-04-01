@@ -10,7 +10,7 @@ pub struct LayoutItem {
 
 impl Renderer {
     pub(super) fn compute_layout(&self, items: &[ResultItem]) -> Vec<LayoutItem> {
-        let mut y = self.dims.padding;
+        let mut y = self.dims.input_height + self.dims.padding;
 
         items
             .iter()

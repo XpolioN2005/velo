@@ -8,14 +8,23 @@ use windows::{
     core::*,
 };
 
+const ENABLE_RENDERER: bool = true;
+const ENABLE_DRAW: bool = true;
+const ENABLE_LOOP: bool = true; // InvalidateRect
+
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {
         match msg {
             WM_CREATE => {
-                let renderer = Box::new(Renderer::new(hwnd).unwrap());
-                let ptr = Box::into_raw(renderer);
+                log_memory("WM_CREATE start");
 
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
+                if ENABLE_RENDERER {
+                    let renderer = Box::new(Renderer::new(hwnd).unwrap());
+                    let ptr = Box::into_raw(renderer);
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
+
+                    log_memory("after renderer init");
+                }
 
                 LRESULT(0)
             }
@@ -26,33 +35,37 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
 
                 let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
 
-                if !ptr.is_null() {
+                if ENABLE_RENDERER && !ptr.is_null() {
                     let renderer = &*ptr;
 
-                    let items = vec![
-                        ResultItem {
-                            title: "First".into(),
-                            selected: true,
-                        },
-                        ResultItem {
-                            title: "Second".into(),
-                            selected: false,
-                        },
-                        ResultItem {
-                            title: "Third".into(),
-                            selected: false,
-                        },
-                    ];
+                    if ENABLE_DRAW {
+                        let items = vec![
+                            ResultItem {
+                                title: "First".into(),
+                                selected: true,
+                            },
+                            ResultItem {
+                                title: "Second".into(),
+                                selected: false,
+                            },
+                            ResultItem {
+                                title: "Third".into(),
+                                selected: false,
+                            },
+                        ];
 
-                    renderer.begin();
-                    renderer.draw_results(&items);
-                    renderer.end();
+                        renderer.begin();
+                        renderer.draw_input_bar("hello world", 5);
+                        renderer.draw_results(&items);
+                        renderer.end();
+                    }
                 }
 
-                EndPaint(hwnd, &ps);
+                let _ = EndPaint(hwnd, &ps);
 
-                // Force redraw (so you actually see updates later)
-                InvalidateRect(Some(hwnd), None, false);
+                if ENABLE_LOOP {
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
 
                 LRESULT(0)
             }
@@ -89,6 +102,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
 }
 
 fn main() -> Result<()> {
+    log_memory("start");
+
     unsafe {
         let hinstance = HINSTANCE(GetModuleHandleW(None)?.0);
 
@@ -103,6 +118,8 @@ fn main() -> Result<()> {
         };
 
         RegisterClassW(&wc);
+
+        log_memory("before window");
 
         let _ = CreateWindowExW(
             Default::default(),
@@ -119,13 +136,29 @@ fn main() -> Result<()> {
             None,
         );
 
+        log_memory("after window");
+
         let mut msg = MSG::default();
 
         while GetMessageW(&mut msg, None, 0, 0).into() {
-            TranslateMessage(&msg);
+            let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
     }
 
     Ok(())
+}
+use sysinfo::{Pid, System};
+
+fn log_memory(stage: &str) {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let pid = Pid::from_u32(std::process::id());
+
+    if let Some(proc) = sys.process(pid) {
+        let mem_mb = proc.memory() as f64 / 1024.0 / 1024.0;
+
+        println!("[{}] Memory: {:.2} MB", stage, mem_mb);
+    }
 }

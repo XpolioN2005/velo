@@ -17,3 +17,4 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Com",
     "Win32_System_LibraryLoader"
 ] }
+sysinfo = "0.30"

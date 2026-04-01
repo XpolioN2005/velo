@@ -3,6 +3,7 @@ pub struct Dimensions {
     pub item_height: f32,
     pub spacing: f32,
     pub width: f32,
+    pub input_height: f32,
 }
 
 impl Default for Dimensions {
@@ -12,6 +13,7 @@ impl Default for Dimensions {
             item_height: 32.0,
             spacing: 4.0,
             width: 500.0,
+            input_height: 40.0,
         }
     }
 }
