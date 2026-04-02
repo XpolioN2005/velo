@@ -55,8 +55,6 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         ];
 
                         renderer.begin();
-                        renderer.draw_input_bar("hello world", 5);
-                        renderer.draw_results(&items);
                         renderer.end();
                     }
                 }

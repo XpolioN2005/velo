@@ -1,0 +1,662 @@
+===== D:\CODE\RUST\velo\libs\velo_renderer\Cargo.toml =====
+[package]
+name = "velo_renderer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+windows = { version = "0.62.2", features = [
+	"Win32_Foundation",
+	"Win32_Graphics_Direct2D",
+	"Win32_Graphics_Direct2D_Common",
+	"Win32_Graphics_DirectWrite",
+	"Win32_Graphics_Dxgi_Common",
+	"Win32_UI_HiDpi",
+	"Win32_System_Com",
+	"Win32_UI_WindowsAndMessaging",
+	"Win32_Graphics_Gdi",
+	"Win32_System_Com",
+	"Win32_System_LibraryLoader"
+] }
+sysinfo = "0.30"
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\examples\test.rs =====
+use velo_renderer::{Renderer, ResultItem};
+
+use windows::{
+    Win32::{
+        Foundation::*, Graphics::Gdi::*, System::LibraryLoader::GetModuleHandleW,
+        UI::WindowsAndMessaging::*,
+    },
+    core::*,
+};
+
+const ENABLE_RENDERER: bool = true;
+const ENABLE_DRAW: bool = true;
+const ENABLE_LOOP: bool = true; // InvalidateRect
+
+extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_CREATE => {
+                log_memory("WM_CREATE start");
+
+                if ENABLE_RENDERER {
+                    let renderer = Box::new(Renderer::new(hwnd).unwrap());
+                    let ptr = Box::into_raw(renderer);
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as isize);
+
+                    log_memory("after renderer init");
+                }
+
+                LRESULT(0)
+            }
+
+            WM_PAINT => {
+                let mut ps = PAINTSTRUCT::default();
+                BeginPaint(hwnd, &mut ps);
+
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
+
+                if ENABLE_RENDERER && !ptr.is_null() {
+                    let renderer = &*ptr;
+
+                    if ENABLE_DRAW {
+                        let items = vec![
+                            ResultItem {
+                                title: "First".into(),
+                                selected: true,
+                            },
+                            ResultItem {
+                                title: "Second".into(),
+                                selected: false,
+                            },
+                            ResultItem {
+                                title: "Third".into(),
+                                selected: false,
+                            },
+                        ];
+
+                        renderer.begin();
+                        renderer.draw_input_bar("hello world", 5);
+                        renderer.draw_results(&items);
+                        renderer.end();
+                    }
+                }
+
+                let _ = EndPaint(hwnd, &ps);
+
+                if ENABLE_LOOP {
+                    let _ = InvalidateRect(Some(hwnd), None, false);
+                }
+
+                LRESULT(0)
+            }
+
+            WM_SIZE => {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
+
+                if !ptr.is_null() {
+                    let renderer = &*ptr;
+
+                    let width = (lparam.0 & 0xFFFF) as u32;
+                    let height = ((lparam.0 >> 16) & 0xFFFF) as u32;
+
+                    renderer.resize(width, height);
+                }
+
+                LRESULT(0)
+            }
+
+            WM_DESTROY => {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Renderer;
+
+                if !ptr.is_null() {
+                    drop(Box::from_raw(ptr));
+                }
+
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
+
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    log_memory("start");
+
+    unsafe {
+        let hinstance = HINSTANCE(GetModuleHandleW(None)?.0);
+
+        let class_name = w!("test_window");
+
+        let wc = WNDCLASSW {
+            hCursor: LoadCursorW(None, IDC_ARROW)?,
+            hInstance: hinstance,
+            lpszClassName: class_name,
+            lpfnWndProc: Some(wndproc),
+            ..Default::default()
+        };
+
+        RegisterClassW(&wc);
+
+        log_memory("before window");
+
+        let _ = CreateWindowExW(
+            Default::default(),
+            class_name,
+            w!("Renderer Test"),
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            600,
+            400,
+            None,
+            None,
+            Some(hinstance),
+            None,
+        );
+
+        log_memory("after window");
+
+        let mut msg = MSG::default();
+
+        while GetMessageW(&mut msg, None, 0, 0).into() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    Ok(())
+}
+use sysinfo::{Pid, System};
+
+fn log_memory(stage: &str) {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let pid = Pid::from_u32(std::process::id());
+
+    if let Some(proc) = sys.process(pid) {
+        let mem_mb = proc.memory() as f64 / 1024.0 / 1024.0;
+
+        println!("[{}] Memory: {:.2} MB", stage, mem_mb);
+    }
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\lib.rs =====
+pub mod renderer;
+pub mod style;
+pub mod types;
+
+pub use renderer::Renderer;
+pub use types::result_item::ResultItem;
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\renderer\core.rs =====
+use windows::{
+    Win32::{
+        Foundation::*,
+        Graphics::{
+            Direct2D::{Common::*, *},
+            DirectWrite::*,
+            Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+        },
+        System::Com::*,
+        UI::WindowsAndMessaging::GetClientRect,
+    },
+    core::*,
+};
+
+use crate::style::{dimensions::Dimensions, theme::Theme};
+
+pub struct Renderer {
+    pub(crate) hwnd: HWND,
+    pub(crate) target: ID2D1HwndRenderTarget,
+
+    // Stored to avoid recreating per frame
+    pub(crate) dw_factory: IDWriteFactory,
+    pub(crate) text_format: IDWriteTextFormat,
+
+    pub(crate) brush_bg: ID2D1SolidColorBrush,
+    pub(crate) brush_text: ID2D1SolidColorBrush,
+    pub(crate) brush_highlight: ID2D1SolidColorBrush,
+    pub(crate) brush_input_bg: ID2D1SolidColorBrush,
+    pub(crate) brush_cursor: ID2D1SolidColorBrush,
+
+    pub(crate) theme: Theme,
+    pub(crate) dims: Dimensions,
+    pub(crate) dpi: f32,
+}
+
+impl Renderer {
+    pub fn new(hwnd: HWND) -> Result<Self> {
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
+
+            let factory = Self::create_d2d_factory()?;
+            let target = Self::create_render_target(&factory, hwnd)?;
+
+            let dw_factory = Self::create_dwrite_factory()?;
+            let text_format = Self::create_text_format(&dw_factory)?;
+
+            let theme = Theme::default();
+
+            let (brush_bg, brush_text, brush_highlight, brush_input_bg, brush_cursor) =
+                Self::create_brushes(&target, &theme)?;
+
+            let dpi = Self::get_dpi(&target);
+
+            Ok(Self {
+                hwnd,
+                target,
+                dw_factory,
+                text_format,
+                brush_bg,
+                brush_text,
+                brush_highlight,
+                brush_input_bg,
+                brush_cursor,
+                theme,
+                dims: Dimensions::default(),
+                dpi,
+            })
+        }
+    }
+
+    fn create_d2d_factory() -> Result<ID2D1Factory> {
+        unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None) }
+    }
+
+    fn create_render_target(factory: &ID2D1Factory, hwnd: HWND) -> Result<ID2D1HwndRenderTarget> {
+        unsafe {
+            let mut rect = RECT::default();
+            GetClientRect(hwnd, &mut rect);
+
+            let size = D2D_SIZE_U {
+                width: (rect.right - rect.left) as u32,
+                height: (rect.bottom - rect.top) as u32,
+            };
+
+            let rt_props = D2D1_RENDER_TARGET_PROPERTIES {
+                r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_IGNORE,
+                },
+                dpiX: 0.0,
+                dpiY: 0.0,
+                usage: D2D1_RENDER_TARGET_USAGE_NONE,
+                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+            };
+
+            let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
+                hwnd,
+                pixelSize: size,
+                presentOptions: D2D1_PRESENT_OPTIONS_NONE,
+            };
+
+            let target = factory.CreateHwndRenderTarget(&rt_props, &hwnd_props)?;
+
+            Ok(target)
+        }
+    }
+
+    fn create_dwrite_factory() -> Result<IDWriteFactory> {
+        unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED) }
+    }
+
+    fn create_text_format(factory: &IDWriteFactory) -> Result<IDWriteTextFormat> {
+        unsafe {
+            factory.CreateTextFormat(
+                w!("Segoe UI"),
+                None,
+                DWRITE_FONT_WEIGHT_REGULAR,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                18.0,
+                w!("en-us"),
+            )
+        }
+    }
+
+    fn create_brushes(
+        target: &ID2D1HwndRenderTarget,
+        theme: &Theme,
+    ) -> Result<(
+        ID2D1SolidColorBrush,
+        ID2D1SolidColorBrush,
+        ID2D1SolidColorBrush,
+        ID2D1SolidColorBrush,
+        ID2D1SolidColorBrush,
+    )> {
+        unsafe {
+            Ok((
+                target.CreateSolidColorBrush(&theme.bg, None)?,
+                target.CreateSolidColorBrush(&theme.text, None)?,
+                target.CreateSolidColorBrush(&theme.highlight, None)?,
+                target.CreateSolidColorBrush(&theme.input_bg, None)?,
+                target.CreateSolidColorBrush(&theme.cursor, None)?,
+            ))
+        }
+    }
+
+    fn get_dpi(target: &ID2D1HwndRenderTarget) -> f32 {
+        unsafe {
+            let mut x = 0.0;
+            let mut y = 0.0;
+            target.GetDpi(&mut x, &mut y);
+            x
+        }
+    }
+
+    pub fn size(&self) -> (f32, f32) {
+        unsafe {
+            let s = self.target.GetSize();
+            (s.width, s.height)
+        }
+    }
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\renderer\draw.rs =====
+use super::Renderer;
+use crate::types::result_item::ResultItem;
+use windows::Win32::Graphics::{
+    Direct2D::{Common::*, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ROUNDED_RECT},
+    DirectWrite::*,
+};
+
+impl Renderer {
+    pub fn draw_rect(&self, rect: D2D_RECT_F) {
+        unsafe {
+            self.target.FillRectangle(&rect, &self.brush_highlight);
+        }
+    }
+
+    pub fn draw_text(&self, text: &str, rect: D2D_RECT_F) {
+        unsafe {
+            let utf16: Vec<u16> = text.encode_utf16().collect();
+
+            self.target.DrawText(
+                &utf16,
+                &self.text_format,
+                &rect,
+                &self.brush_text,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
+    }
+
+    pub fn measure_text_until(&self, text: &str, pos: usize) -> f32 {
+        unsafe {
+            let sub = &text[..pos];
+            let utf16: Vec<u16> = sub.encode_utf16().collect();
+
+            let layout = self
+                .dw_factory
+                .CreateTextLayout(&utf16, &self.text_format, 1000.0, 100.0)
+                .unwrap();
+
+            let mut metrics = DWRITE_TEXT_METRICS::default();
+            layout.GetMetrics(&mut metrics).unwrap();
+
+            metrics.width
+        }
+    }
+
+    // -------- INPUT BAR --------
+
+    pub fn draw_input_bar(&self, rect: D2D_RECT_F, text: &str, cursor_pos: usize) {
+        let radius = 6.0;
+
+        let rounded = D2D1_ROUNDED_RECT {
+            rect,
+            radiusX: radius,
+            radiusY: radius,
+        };
+
+        unsafe {
+            self.target
+                .FillRoundedRectangle(&rounded, &self.brush_input_bg);
+
+            self.target
+                .DrawRoundedRectangle(&rounded, &self.brush_text, 0.8, None);
+        }
+
+        let text_rect = D2D_RECT_F {
+            left: rect.left + 10.0,
+            top: rect.top + 6.0,
+            right: rect.right,
+            bottom: rect.bottom,
+        };
+
+        self.draw_text(text, text_rect);
+
+        let cursor_x = text_rect.left + self.measure_text_until(text, cursor_pos);
+
+        let cursor_rect = D2D_RECT_F {
+            left: cursor_x,
+            top: rect.top + 6.0,
+            right: cursor_x + 2.0,
+            bottom: rect.bottom - 6.0,
+        };
+
+        unsafe {
+            self.target.FillRectangle(&cursor_rect, &self.brush_cursor);
+        }
+    }
+
+    // -------- RESULTS --------
+
+    pub fn draw_results(&self, items: &[ResultItem], width: f32) {
+        use crate::style::layout::*;
+
+        for (i, item) in items.iter().enumerate() {
+            let row = row_rect(width, i);
+
+            if item.selected {
+                self.draw_rect(row);
+            }
+
+            let text_rect = name_rect(row);
+
+            self.draw_text(&item.title, text_rect);
+        }
+    }
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\renderer\frame.rs =====
+use super::Renderer;
+use windows::Win32::Graphics::Direct2D::Common::*;
+
+impl Renderer {
+    pub fn begin(&self) {
+        unsafe {
+            self.target.BeginDraw();
+            self.target.Clear(Some(&self.theme.bg));
+        }
+    }
+
+    pub fn end(&self) {
+        unsafe {
+            self.target.EndDraw(None, None).ok();
+        }
+    }
+
+    pub fn resize(&self, w: u32, h: u32) {
+        unsafe {
+            self.target
+                .Resize(&D2D_SIZE_U {
+                    width: w,
+                    height: h,
+                })
+                .ok();
+        }
+    }
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\renderer\layout.rs =====
+use super::Renderer;
+use crate::types::{rect::Rect, result_item::ResultItem};
+
+pub struct LayoutItem {
+    pub rect: Rect,
+    pub text_pos: (f32, f32),
+    pub selected: bool,
+    pub text: String,
+}
+
+impl Renderer {
+    pub(super) fn compute_layout(&self, items: &[ResultItem]) -> Vec<LayoutItem> {
+        let mut y = self.dims.input_height + self.dims.padding;
+
+        items
+            .iter()
+            .map(|item| {
+                let rect = Rect {
+                    x: self.dims.padding,
+                    y,
+                    w: self.dims.width,
+                    h: self.dims.item_height,
+                };
+
+                let layout = LayoutItem {
+                    rect,
+                    text_pos: (rect.x + 10.0, rect.y + 6.0),
+                    selected: item.selected,
+                    text: item.title.clone(),
+                };
+
+                y += self.dims.item_height + self.dims.spacing;
+                layout
+            })
+            .collect()
+    }
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\renderer\mod.rs =====
+mod core;
+mod draw;
+mod frame;
+mod layout;
+
+pub use core::Renderer;
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\style\dimensions.rs =====
+pub struct Dimensions {
+    pub padding: f32,
+    pub item_height: f32,
+    pub spacing: f32,
+    pub width: f32,
+    pub input_height: f32,
+}
+
+impl Default for Dimensions {
+    fn default() -> Self {
+        Self {
+            padding: 10.0,
+            item_height: 32.0,
+            spacing: 4.0,
+            width: 500.0,
+            input_height: 40.0,
+        }
+    }
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\style\mod.rs =====
+pub mod dimensions;
+pub mod theme;
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\style\theme.rs =====
+use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
+
+pub struct Theme {
+    pub bg: D2D1_COLOR_F,
+    pub text: D2D1_COLOR_F,
+    pub highlight: D2D1_COLOR_F,
+    pub input_bg: D2D1_COLOR_F,
+    pub cursor: D2D1_COLOR_F,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            bg: D2D1_COLOR_F {
+                r: 0.1,
+                g: 0.1,
+                b: 0.1,
+                a: 1.0,
+            },
+            text: D2D1_COLOR_F {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
+            highlight: D2D1_COLOR_F {
+                r: 0.2,
+                g: 0.4,
+                b: 0.8,
+                a: 1.0,
+            },
+            input_bg: D2D1_COLOR_F {
+                r: 0.15,
+                g: 0.15,
+                b: 0.15,
+                a: 1.0,
+            },
+            cursor: D2D1_COLOR_F {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
+        }
+    }
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\types\mod.rs =====
+pub mod rect;
+pub mod result_item;
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\types\rect.rs =====
+#[derive(Clone, Copy)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\types\result_item.rs =====
+pub struct ResultItem {
+    pub title: String,
+    pub selected: bool,
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\utils\dpi.rs =====
+pub fn scale(value: f32, dpi: f32) -> f32 {
+    value * (dpi / 96.0)
+}
+
+
+===== D:\CODE\RUST\velo\libs\velo_renderer\src\utils\mod.rs =====
+pub mod dpi;
+
+
