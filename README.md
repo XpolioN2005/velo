@@ -9,6 +9,11 @@ A fast, native command palette for Windows built in Rust using Win32, Direct2D, 
 
 No frameworks. No Electron. No overhead.
 
+> ⚠️ **Project Paused**
+>
+> Development is temporarily on hold while the architecture is being reworked.
+> Will resume once things are stable again.
+
 ---
 
 ## Features
